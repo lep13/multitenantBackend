@@ -15,7 +15,6 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
-
 	// Decode the request body into LoginRequest
 	var loginRequest models.LoginRequest
 	err := json.NewDecoder(r.Body).Decode(&loginRequest)
@@ -51,9 +50,8 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		// Route to the appropriate page based on the tag
 		switch tag {
 		case "admin":
-			// Route to admin page
-			//http.Redirect(w, r, "/admin-dashboard", http.StatusSeeOther)
-           // fmt.Print("got admin tag")
+			// Redirect URL for admin
+			response.RedirectURL = "/admin"
 			return
 		case "manager":
 			// Route to manager page
@@ -71,6 +69,9 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			// Send the error response
 			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			err := json.NewEncoder(w).Encode(response)
 			if err != nil {
 				http.Error(w, "Failed to send response", http.StatusInternalServerError)

@@ -15,6 +15,7 @@ type LoginRequest struct {
 
 // LoginResponse represents the structure of the login response
 type LoginResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
+	Success     bool   `json:"success"`
+	Message     string `json:"message"`
+	RedirectURL string `json:"redirectURL,omitempty"`
 }
