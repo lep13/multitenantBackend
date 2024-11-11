@@ -153,17 +153,14 @@ func DeleteUserHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ListGroupsHandler(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Username string `json:"username"`
-	}
+	username := r.URL.Query().Get("username")
 
-	err := json.NewDecoder(r.Body).Decode(&input)
-	if err != nil || input.Username == "" {
+	if username == "" {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
 	}
 
-	response := db.ListGroupsByManager(input.Username)
+	response := db.ListGroupsByManager(username)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "Failed to send response", http.StatusInternalServerError)
 	}

@@ -7,10 +7,10 @@ type User struct {
 	Tag      string `bson:"tag"`
 }
 
+// LoginRequest represents the structure of the login request
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
-	Tag      string `bson:"tag"`
 }
 
 // LoginResponse represents the structure of the login response

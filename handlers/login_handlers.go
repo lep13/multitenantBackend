@@ -10,12 +10,19 @@ import (
 
 // LoginHandler handles the login requests
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
-	// Only allow POST requests
+	// Allow only POST requests
 	if r.Method != http.MethodPost {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
-	// Decode the request body into LoginRequest
+
+	// Set necessary headers
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	// Parse the request body into LoginRequest struct
 	var loginRequest models.LoginRequest
 	err := json.NewDecoder(r.Body).Decode(&loginRequest)
 	if err != nil {
@@ -23,7 +30,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authenticate the user using the provided credentials and fetch the user's tag
+	// Authenticate the user and get the user's tag
 	isAuthenticated, tag, err := db.AuthenticateUser(loginRequest.Username, loginRequest.Password)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error during authentication: %v", err), http.StatusInternalServerError)
@@ -32,66 +39,47 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Prepare the response
 	var response models.LoginResponse
+
 	if isAuthenticated {
-		// Authentication succeeded, now route based on the tag
-		response = models.LoginResponse{
-			Success: true,
-			Message: "Login successful",
-		}
-
-		// Send the login success response
-		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(response)
-		if err != nil {
-			http.Error(w, "Failed to send response", http.StatusInternalServerError)
-			return
-		}
-
-		// Route to the appropriate page based on the tag
+		// Set the RedirectURL based on the user's role (tag)
 		switch tag {
 		case "admin":
-			// Redirect URL for admin
-			response.RedirectURL = "/admin"
-			return
+			response = models.LoginResponse{
+				Success:     true,
+				Message:     "Login successful",
+				RedirectURL: "/admin",
+			}
 		case "manager":
-			// Route to manager page
-			//http.Redirect(w, r, "/manager-dashboard", http.StatusSeeOther)
-			return
+			response = models.LoginResponse{
+				Success:     true,
+				Message:     "Login successful",
+				RedirectURL: "/manager",
+			}
 		case "user":
-			// Route to user page
-			//http.Redirect(w, r, "/user-dashboard", http.StatusSeeOther)
-			return
+			response = models.LoginResponse{
+				Success:     true,
+				Message:     "Login successful",
+				RedirectURL: "/user",
+			}
 		default:
-			// If the tag is invalid, deny access
 			response = models.LoginResponse{
 				Success: false,
 				Message: "Invalid user tag",
 			}
-			// Send the error response
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-			err := json.NewEncoder(w).Encode(response)
-			if err != nil {
-				http.Error(w, "Failed to send response", http.StatusInternalServerError)
-			}
+			w.WriteHeader(http.StatusUnauthorized)
 		}
 	} else {
-		// Invalid credentials
+		// If credentials are invalid, send an error response
 		response = models.LoginResponse{
 			Success: false,
 			Message: "Invalid username or password",
 		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}
 
-		// Send the error response
-		w.Header().Set("Content-Type", "application/json")
-        w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
-        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-        w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		err = json.NewEncoder(w).Encode(response)
-		if err != nil {
-			http.Error(w, "Failed to send response", http.StatusInternalServerError)
-		}
+	// Encode and send the JSON response
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
+		http.Error(w, "Failed to send response", http.StatusInternalServerError)
 	}
 }

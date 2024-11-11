@@ -41,7 +41,7 @@ func CreateUser(username, password string) models.UserResponse  {
 	err := GetUsersCollection().FindOne(context.Background(), bson.M{"username": username}).Decode(&existingUser)
 	if err == nil {
 		return models.UserResponse {
-			Message: "user already exists",
+			Message: "Failed to create user: user already exists",
 			Status:  "error",
 		}
 	} else if err != mongo.ErrNoDocuments {
@@ -195,16 +195,40 @@ func RemoveUserFromGroup(manager, groupName, username string) models.UserRespons
 }
 
 // DeleteUser deletes a user from the "users" collection
-func DeleteUser(username string) models.UserResponse  {
-	_, err := GetUsersCollection().DeleteOne(context.Background(), bson.M{"username": username})
+func DeleteUser(username string) models.UserResponse {
+	// Check if the user exists
+	count, err := GetUsersCollection().CountDocuments(context.Background(), bson.M{"username": username})
 	if err != nil {
-		return models.UserResponse {
+		return models.UserResponse{
+			Message: fmt.Sprintf("error checking user existence: %v", err),
+			Status:  "error",
+		}
+	}
+
+	// If user does not exist, return a specific message
+	if count == 0 {
+		return models.UserResponse{
+			Message: "User does not exist",
+			Status:  "error",
+		}
+	}
+
+	// Attempt to delete the user
+	_, err = GetUsersCollection().DeleteOne(context.Background(), bson.M{"username": username})
+	if err != nil {
+		return models.UserResponse{
 			Message: fmt.Sprintf("error deleting user: %v", err),
 			Status:  "error",
 		}
 	}
-	return models.UserResponse {Message: "User deleted successfully"}
+
+	// If deletion is successful
+	return models.UserResponse{
+		Message: "User deleted successfully",
+		Status:  "success",
+	}
 }
+
 func ListGroupsByManager(manager string) models.UserResponse {
     filter := bson.M{"manager": manager}
     
