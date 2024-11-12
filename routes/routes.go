@@ -21,6 +21,7 @@ func InitializeRoutes() *mux.Router {
     router.HandleFunc("/add-budget", handlers.AddBudgetHandler).Methods("POST")
     router.HandleFunc("/update-budget", handlers.UpdateBudgetHandler).Methods("PUT")
     router.HandleFunc("/list-groups", handlers.ListGroupsHandler).Methods("GET")
+	router.HandleFunc("/check-user-group", handlers.CheckUserGroupHandler).Methods("GET")
 
 	return router
 }

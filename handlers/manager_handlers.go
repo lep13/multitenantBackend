@@ -68,7 +68,6 @@ func CreateGroupHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
-
 // AddUserHandler adds an existing user to a group
 func AddUserHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
@@ -207,7 +206,6 @@ func AddBudgetHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
-
 func UpdateBudgetHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Manager   string  `json:"manager"`
@@ -247,4 +245,34 @@ func UpdateBudgetHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+}
+
+// CheckUserGroupHandler handles checking if a user is already part of a group
+func CheckUserGroupHandler(w http.ResponseWriter, r *http.Request) {
+	// Retrieve the username from the query parameters
+	username := r.URL.Query().Get("username")
+	if username == "" {
+		http.Error(w, "Invalid input: 'username' parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Call the CheckUserGroup function
+	response := db.CheckUserGroup(username)
+
+	// Set headers for CORS
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	// Write the response
+	if response.Status == "error" {
+		w.WriteHeader(http.StatusBadRequest)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to send response", http.StatusInternalServerError)
+	}
 }

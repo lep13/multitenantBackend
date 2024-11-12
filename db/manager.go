@@ -384,3 +384,32 @@ func UpdateBudget(manager, groupName string, budget float64) models.UserResponse
         Status:  "success",
     }
 }
+
+// CheckUserGroup checks if a user is already a member of any group.
+func CheckUserGroup(username string) models.UserResponse {
+	// Define filter to check if the user is already in a group
+	filter := bson.M{"members": username}
+	var existingGroup bson.M
+
+	// Query the "groups" collection to find if the user is a member of any group
+	err := GetGroupsCollection().FindOne(context.Background(), filter).Decode(&existingGroup)
+	if err == nil {
+		// User is found in an existing group
+		return models.UserResponse{
+			Message: "User is already a member of another group and cannot be added to multiple groups",
+			Status:  "error",
+		}
+	} else if err != mongo.ErrNoDocuments {
+		// Handle any other error during the query
+		return models.UserResponse{
+			Message: fmt.Sprintf("Error checking user's group membership: %v", err),
+			Status:  "error",
+		}
+	}
+
+	// If no documents were found, the user is not in any group
+	return models.UserResponse{
+		Message: "User is not a member of any group",
+		Status:  "success",
+	}
+}
