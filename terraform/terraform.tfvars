@@ -1,0 +1,12 @@
+ami_id = "ami-073e3b46f8802d31b" # Replace with your desired AMI ID
+instance_type = "t2.micro"
+key_name = "ec2-keypair"
+subnet_id = "subnet-060eab3f537fe436e"
+security_group_ids = ["sg-0df9af7fd876590f3"]
+bucket_name = "my-unique-s3-bucket-name"
+enable_versioning = true
+lambda_name = "MyLambdaFunction"
+lambda_role_arn = "arn:aws:iam::123456789012:role/MyLambdaRole"
+lambda_handler = "index.handler"
+lambda_runtime = "nodejs18.x"
+lambda_zip_path = "C:/Users/Relanto/function.zip"
