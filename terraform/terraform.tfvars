@@ -1,6 +1,6 @@
-ami_id = "ami-073e3b46f8802d31b" # Replace with your desired AMI ID
+ami_id = "ami-073e3b46f8802d31b" 
 instance_type = "t2.micro"
-key_name = "ec2-keypair"
+key_name = "ec2-keyapir"
 subnet_id = "subnet-060eab3f537fe436e"
 security_group_ids = ["sg-0df9af7fd876590f3"]
 bucket_name = "my-unique-s3-bucket-name"
