@@ -2,148 +2,112 @@ package db
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
-	"log"
-	"multitenant/models"
+	"multitenant/config"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// GetServicesCollection returns the "services" collection
+var newClient *mongo.Client
+
+// "groups" collection
+func GroupsCollection() *mongo.Collection {
+	return newClient.Database("mydatabase").Collection("groups")
+}
+
+// "user_sessions" collection
+func GetUserSessionCollection() *mongo.Collection {
+	return newClient.Database("mydatabase").Collection("user_sessions")
+}
+
+// "services" collection
 func GetServicesCollection() *mongo.Collection {
-	return client.Database("mydatabase").Collection("services")
+	return newClient.Database("mydatabase").Collection("services")
 }
 
-// GetBudgetCollection returns the "budget" collection
-func GetBudgetCollection() *mongo.Collection {
-	return client.Database("mydatabase").Collection("budget")
-}
-
-// CheckBudgetForRequest checks if a requested service fits within the group's remaining budget.
-func CheckBudgetForRequest(groupName string, requestedCost float64) (bool, string) {
-	var budgetInfo models.Budget
-	err := GetBudgetCollection().FindOne(context.Background(), bson.M{"group_name": groupName}).Decode(&budgetInfo)
+// Initialize MongoDB connection
+func init() {
+	var err error
+	newClient, err = mongo.Connect(context.Background(), options.Client().ApplyURI(config.MongoURI))
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return false, "Group budget not found"
-		}
-		log.Printf("Error checking budget for request: %v", err)
-		return false, "Error accessing budget data"
-	}
-
-	// Calculate the remaining budget
-	remainingBudget := budgetInfo.BudgetRemaining
-
-	if requestedCost <= remainingBudget {
-		return true, "Request is within budget"
-	} else {
-		return false, fmt.Sprintf("Request exceeds remaining budget. Available: $%.2f, Requested: $%.2f", remainingBudget, requestedCost)
+		panic(fmt.Sprintf("Failed to connect to MongoDB: %v", err))
 	}
 }
 
-// UpdateBudgetUsage updates the budget usage of a group after a service request is created.
-func UpdateBudgetUsage(groupName string, cost float64) (bool, string) {
-	// Increment the used budget by the cost of the requested service and adjust remaining budget
-	update := bson.M{
-		"$inc": bson.M{
-			"budget_used":      cost,
-			"budget_remaining": -cost,
-		},
-	}
-	result, err := GetBudgetCollection().UpdateOne(context.Background(), bson.M{"group_name": groupName}, update)
-
+// GenerateSessionID generates a unique session ID
+func GenerateSessionID() string {
+	randomBytes := make([]byte, 16)
+	_, err := rand.Read(randomBytes)
 	if err != nil {
-		log.Printf("Error updating budget usage: %v", err)
-		return false, "Failed to update budget usage"
+		panic("Failed to generate random bytes for session ID")
 	}
-
-	if result.MatchedCount == 0 {
-		return false, "Group budget not found"
-	}
-
-	return true, "Budget updated successfully"
+	return hex.EncodeToString(randomBytes) + "-" + time.Now().Format("20060102150405")
 }
 
-// CreateServiceRequest inserts a new service request into the services collection.
-func CreateServiceRequest(service models.ServiceRequest) (bool, string) {
-	_, err := GetServicesCollection().InsertOne(context.Background(), service)
-	if err != nil {
-		log.Printf("Error creating service request: %v", err)
-		return false, "Failed to create service request"
-	}
-	return true, "Service request created successfully"
+// StartSession starts a new session for a user
+func StartSession(username, provider string) (string, error) {
+    // Fetch user's group details
+    var group struct {
+        Groupname     string  `bson:"group_name"`
+        TotalBudget   float64 `bson:"budget"`
+        CurrentBudget float64 `bson:"current_budget,omitempty"` // Optional field
+    }
+
+    // Updated query to check if the user exists in the 'members' array
+    err := GetGroupsCollection().FindOne(context.Background(), bson.M{"members": bson.M{"$elemMatch": bson.M{"$eq": username}}}).Decode(&group)
+    if err != nil {
+        return "", fmt.Errorf("group not found for the user: %v", err)
+    }
+
+    // If `current_budget` is missing, initialize it with `total_budget`
+    if group.CurrentBudget == 0 {
+        group.CurrentBudget = group.TotalBudget
+        // Update the `groups` collection to set `current_budget`
+        _, err = GetGroupsCollection().UpdateOne(context.Background(),
+            bson.M{"members": bson.M{"$elemMatch": bson.M{"$eq": username}}},
+            bson.M{"$set": bson.M{"current_budget": group.TotalBudget}},
+        )
+        if err != nil {
+            return "", fmt.Errorf("failed to initialize current budget: %v", err)
+        }
+    }
+
+    // Generate session ID
+    sessionID := GenerateSessionID()
+
+    // Insert session into database
+    session := bson.M{
+        "username":       username,
+        "groupname":      group.Groupname,
+        "provider":       provider,
+        "session_id":     sessionID,
+        "status":         "in-progress",
+        "group_budget":   group.TotalBudget,
+        "current_budget": group.CurrentBudget,
+    }
+
+    _, err = GetUserSessionCollection().InsertOne(context.Background(), session)
+    if err != nil {
+        return "", fmt.Errorf("failed to start session: %v", err)
+    }
+
+    return sessionID, nil
 }
 
-// UpdateServiceStatus updates the status of a service when its end date is reached or it is manually terminated.
-func UpdateServiceStatus(serviceID string, newStatus string) (bool, string) {
-	filter := bson.M{"service_id": serviceID}
-	update := bson.M{
-		"$set": bson.M{
-			"status":   newStatus,
-			"end_date": time.Now(),
-		},
+// FetchGroupBudget fetches the user's group budget
+func FetchGroupBudget(username string) (float64, float64, error) {
+	var group struct {
+		TotalBudget   float64 `bson:"total_budget"`
+		CurrentBudget float64 `bson:"current_budget"`
 	}
-	result, err := GetServicesCollection().UpdateOne(context.Background(), filter, update)
+	err := GetGroupsCollection().FindOne(context.Background(), bson.M{"username": username}).Decode(&group)
 	if err != nil {
-		log.Printf("Error updating service status: %v", err)
-		return false, "Failed to update service status"
+		return 0, 0, fmt.Errorf("failed to fetch group budget: %v", err)
 	}
-	if result.MatchedCount == 0 {
-		return false, "Service not found"
-	}
-	return true, "Service status updated successfully"
-}
-
-// ListActiveServices retrieves active services for a user or group.
-func ListActiveServices(userID string, groupName string) ([]models.ServiceRequest, string) {
-	filter := bson.M{"status": "running"}
-	if userID != "" {
-		filter["user_id"] = userID
-	} else if groupName != "" {
-		filter["group_name"] = groupName
-	} else {
-		return nil, "No user ID or group name provided"
-	}
-
-	cursor, err := GetServicesCollection().Find(context.Background(), filter)
-	if err != nil {
-		log.Printf("Error listing active services: %v", err)
-		return nil, "Failed to retrieve active services"
-	}
-	defer cursor.Close(context.Background())
-
-	var services []models.ServiceRequest
-	if err = cursor.All(context.Background(), &services); err != nil {
-		log.Printf("Error decoding active services: %v", err)
-		return nil, "Failed to decode active services"
-	}
-	return services, "Active services retrieved successfully"
-}
-
-// ListTerminatedServices retrieves terminated services for a user or group.
-func ListTerminatedServices(userID string, groupName string) ([]models.ServiceRequest, string) {
-	filter := bson.M{"status": "terminated"}
-	if userID != "" {
-		filter["user_id"] = userID
-	} else if groupName != "" {
-		filter["group_name"] = groupName
-	} else {
-		return nil, "No user ID or group name provided"
-	}
-
-	cursor, err := GetServicesCollection().Find(context.Background(), filter)
-	if err != nil {
-		log.Printf("Error listing terminated services: %v", err)
-		return nil, "Failed to retrieve terminated services"
-	}
-	defer cursor.Close(context.Background())
-
-	var services []models.ServiceRequest
-	if err = cursor.All(context.Background(), &services); err != nil {
-		log.Printf("Error decoding terminated services: %v", err)
-		return nil, "Failed to decode terminated services"
-	}
-	return services, "Terminated services retrieved successfully"
+	return group.TotalBudget, group.CurrentBudget, nil
 }
