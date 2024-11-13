@@ -111,3 +111,30 @@ func FetchGroupBudget(username string) (float64, float64, error) {
 	}
 	return group.TotalBudget, group.CurrentBudget, nil
 }
+
+// UpdateSession updates the session document with service and date details
+func UpdateSession(sessionID, service, startDate, endDate string) error {
+	// Define the filter to find the session by session ID
+	filter := bson.M{"session_id": sessionID}
+
+	// Define the update object
+	update := bson.M{
+		"$set": bson.M{
+			"service":    service,
+			"start_date": startDate,
+			"end_date":   endDate,
+		},
+	}
+
+	// Perform the update
+	result, err := GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		return fmt.Errorf("failed to update session: %v", err)
+	}
+
+	if result.MatchedCount == 0 {
+		return fmt.Errorf("no session found with session_id: %s", sessionID)
+	}
+
+	return nil
+}

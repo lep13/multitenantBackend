@@ -69,3 +69,35 @@ func GetCloudServicesHandler(w http.ResponseWriter, r *http.Request) {
 		"services": services,
 	})
 }
+
+// UpdateSessionHandler updates the session with service, start date, and end date
+func UpdateSessionHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"session_id"`
+		Service   string `json:"service"`
+		StartDate string `json:"start_date"`
+		EndDate   string `json:"end_date"`
+	}
+
+	// Decode the input
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
+
+	// Ensure required fields are present
+	if req.SessionID == "" || req.Service == "" || req.StartDate == "" || req.EndDate == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// Call the DB function to update the session
+	err := db.UpdateSession(req.SessionID, req.Service, req.StartDate, req.EndDate)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update session: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Session updated successfully"))
+}
