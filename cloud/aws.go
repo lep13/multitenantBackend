@@ -129,35 +129,6 @@ func CreateS3Bucket(bucketName string, enableVersioning bool, Region string) (*s
 	return result, nil
 }
 
-// GetLambdaRuntimes fetches a list of supported Lambda runtimes
-func GetLambdaRuntimes() ([]string, error) {
-	// The list of runtimes is static, fetched from the Lambda SDK's `types.Runtime`
-	runtimes := []lambdatypes.Runtime{
-		lambdatypes.RuntimeNodejs14x,
-		lambdatypes.RuntimeNodejs16x,
-		lambdatypes.RuntimePython39,
-		lambdatypes.RuntimePython38,
-		lambdatypes.RuntimeGo1x,
-		lambdatypes.RuntimeJava11,
-		lambdatypes.RuntimeJava8,
-		lambdatypes.RuntimeRuby27,
-		lambdatypes.RuntimeDotnet6,
-		// lambdatypes.RuntimeDotnetCore31,
-	}
-
-	// Convert to string slice
-	runtimeStrings := make([]string, len(runtimes))
-	for i, runtime := range runtimes {
-		runtimeStrings[i] = string(runtime)
-	}
-
-	if len(runtimeStrings) == 0 {
-		return nil, fmt.Errorf("no runtimes found")
-	}
-
-	return runtimeStrings, nil
-}
-
 //Lambda Function Creation
 const lambdaExecutionRoleARN = "arn:aws:iam::058264391220:role/LambdaExecutionRole" 
 func CreateLambdaFunction(functionName, handler, runtime, zipFilePath, region string) (*lambda.CreateFunctionOutput, error) {

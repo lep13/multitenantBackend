@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"multitenant/cloud"
 	"net/http"
+	"os"
 )
 
 // Handler for creating EC2 instance
@@ -57,18 +58,6 @@ func CreateS3BucketHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-// GetLambdaRuntimesHandler handles fetching Lambda runtimes
-func GetLambdaRuntimesHandler(w http.ResponseWriter, r *http.Request) {
-	runtimes, err := cloud.GetLambdaRuntimes()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to fetch Lambda runtimes: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(runtimes)
-}
-
 // Handler for creating Lambda function
 func CreateLambdaFunctionHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -76,7 +65,7 @@ func CreateLambdaFunctionHandler(w http.ResponseWriter, r *http.Request) {
 		Handler      string `json:"handler"`
 		Runtime      string `json:"runtime"`
 		ZipFilePath  string `json:"zip_file_path"`
-		Region       string `json:"region"` 
+		Region       string `json:"region"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -124,9 +113,9 @@ func CreateRDSInstanceHandler(w http.ResponseWriter, r *http.Request) {
 // Handler for creating DynamoDB table
 func CreateDynamoDBTableHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName       string `json:"table_name"`
-		ReadCapacity    int64  `json:"read_capacity"`
-		WriteCapacity   int64  `json:"write_capacity"`
+		TableName     string `json:"table_name"`
+		ReadCapacity  int64  `json:"read_capacity"`
+		WriteCapacity int64  `json:"write_capacity"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -181,4 +170,31 @@ func CreateVPCHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(result)
+}
+
+// GetDropdownData serves dropdown data for the UI
+func GetDropdownData(w http.ResponseWriter, r *http.Request) {
+	// Load the JSON file
+	file, err := os.Open("terraform_outputs.json")
+	if err != nil {
+		http.Error(w, "Failed to load dropdown data", http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+
+	// Parse the JSON file
+	var data map[string]interface{}
+	if err := json.NewDecoder(file).Decode(&data); err != nil {
+		http.Error(w, "Failed to parse dropdown data", http.StatusInternalServerError)
+		return
+	}
+
+	// Add hardcoded Lambda runtimes
+	data["lambda_supported_runtimes"] = []string{
+		"nodejs18.x", "python3.9", "go1.x", "java11", "ruby2.7", "dotnet6",
+	}
+
+	// Send the combined response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
 }

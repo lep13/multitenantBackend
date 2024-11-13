@@ -25,19 +25,15 @@ func InitializeRoutes() *mux.Router {
 
 	// routes for AWS service creation
 	router.HandleFunc("/create-ec2-instance", handlers.CreateEC2InstanceHandler).Methods("POST")
-
 	router.HandleFunc("/create-s3-bucket", handlers.CreateS3BucketHandler).Methods("POST")
-
 	router.HandleFunc("/create-lambda-function", handlers.CreateLambdaFunctionHandler).Methods("POST")
-	router.HandleFunc("/get-lambda-runtimes", handlers.GetLambdaRuntimesHandler).Methods("GET")
-
 	router.HandleFunc("/create-rds-instance", handlers.CreateRDSInstanceHandler).Methods("POST")
-
 	router.HandleFunc("/create-dynamodb-table", handlers.CreateDynamoDBTableHandler).Methods("POST")
-
 	router.HandleFunc("/create-cloudfront-distribution", handlers.CreateCloudFrontDistributionHandler).Methods("POST")
-	
 	router.HandleFunc("/create-vpc", handlers.CreateVPCHandler).Methods("POST")
+
+	// routes for GCP service creation
+	router.HandleFunc("/create-compute-engine", handlers.CreateComputeEngineHandler).Methods("POST")
 
 	return router
 }

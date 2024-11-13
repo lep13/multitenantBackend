@@ -1,5 +1,5 @@
 provider "aws" {
-  region = "us-east-1" # Default region; you can override with specific region
+  region = "us-east-1" # Default region
 }
 
 # Fetch available EC2 instance types
@@ -12,9 +12,6 @@ data "aws_subnets" "all" {}
 
 # Fetch available security groups
 data "aws_security_groups" "all" {}
-
-# Fetch available key pairs
-data "aws_key_pairs" "all" {}
 
 # Fetch available AMIs (example: Amazon Linux 2)
 data "aws_ami" "amazon_linux" {
@@ -29,45 +26,49 @@ data "aws_ami" "amazon_linux" {
 }
 
 # Fetch supported Lambda runtimes
-data "aws_lambda_runtimes" "supported" {}
-
-# EC2 Instance Configuration
-resource "aws_instance" "ec2_instance" {
-  ami           = var.ami_id
-  instance_type = var.instance_type
-  key_name      = var.key_name
-  subnet_id     = var.subnet_id
-  vpc_security_group_ids = var.security_group_ids
-
-  tags = {
-    Name = "MultitenantAppEC2Instance"
-  }
+locals {
+  lambda_supported_runtimes = [
+    "nodejs14.x",
+    "nodejs16.x",
+    "python3.9",
+    "python3.8",
+    "go1.x",
+    "java11",
+    "java8",
+    "ruby2.7",
+    "dotnet6"
+  ]
 }
 
-# S3 Bucket Configuration
-resource "aws_s3_bucket" "example_bucket" {
-  bucket = var.bucket_name
-  acl    = "private"
 
-  versioning {
-    enabled = var.enable_versioning
-  }
 
-  tags = {
-    Name = "MultitenantAppS3Bucket"
-  }
+
+provider "google" {
+  project = "gifted-fragment-436605-u0"
+  region  = "us-east1"
+  zone    = "us-east1-b"
 }
 
-# Lambda Function Configuration
-resource "aws_lambda_function" "example_lambda" {
-  function_name = var.lambda_name
-  role          = var.lambda_role_arn
-  handler       = var.lambda_handler
-  runtime       = var.lambda_runtime
-  filename      = var.lambda_zip_path
-
-  tags = {
-    Name = "MultitenantAppLambda"
-  }
+# Fetch available machine types in the zone
+data "google_compute_machine_types" "types" {
+  zone = "us-east1-b"
 }
 
+# Fetch available zones in the region
+data "google_compute_zones" "available_zones" {}
+
+# Fetch public images (e.g., Debian)
+data "google_compute_image" "debian
+
+data "google_compute_image" "debian" {
+  family  = "debian-11"
+  project = "debian-cloud"
+}
+
+# Fetch available networks
+data "google_compute_networks" "networks" {}
+
+# Fetch available subnetworks for the selected network
+data "google_compute_subnetworks" "subnetworks" {
+  region = "us-east1"
+}
