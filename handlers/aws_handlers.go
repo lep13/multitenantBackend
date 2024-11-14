@@ -1,15 +1,21 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"multitenant/cloud"
+	"multitenant/db"
 	"net/http"
+
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 // Handler for creating EC2 instance
 func CreateEC2InstanceHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		SessionID       string `json:"session_id"`
 		InstanceType    string `json:"instance_type"`
 		AmiID           string `json:"ami_id"`
 		KeyName         string `json:"key_name"`
@@ -22,12 +28,41 @@ func CreateEC2InstanceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := cloud.CreateEC2Instance(req.InstanceType, req.AmiID, req.KeyName, req.SubnetID, req.SecurityGroupID)
+	// Fetch session details
+	var session bson.M
+	err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Could not create EC2 instance: %v", err), http.StatusInternalServerError)
+		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 
+	// Check if the session is approved
+	status := session["status"].(string)
+	if status != "ok" {
+		http.Error(w, "Session is not approved for service creation", http.StatusForbidden)
+		return
+	}
+
+	// Proceed with service creation
+	result, err := cloud.CreateEC2Instance(req.InstanceType, req.AmiID, req.KeyName, req.SubnetID, req.SecurityGroupID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create EC2 instance: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Finalize the session
+	completeReq := struct {
+		SessionID string `json:"session_id"`
+		Status    string `json:"status"`
+	}{
+		SessionID: req.SessionID,
+		Status:    "completed",
+	}
+
+	completeData, _ := json.Marshal(completeReq)
+	http.Post("http://localhost:8080/complete-session", "application/json", bytes.NewReader(completeData))
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }
 
@@ -40,26 +75,60 @@ type S3BucketRequest struct {
 
 // CreateS3BucketHandler handles requests to create an S3 bucket
 func CreateS3BucketHandler(w http.ResponseWriter, r *http.Request) {
-	var req S3BucketRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
+	var req struct {
+		SessionID  string `json:"session_id"`
+		BucketName string `json:"bucket_name"`
+		Versioning bool   `json:"versioning"`
+		Region     string `json:"region"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	result, err := cloud.CreateS3Bucket(req.BucketName, req.Versioning, req.Region)
+	// Fetch session details
+	var session bson.M
+	err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Could not create S3 bucket: %v", err), http.StatusInternalServerError)
+		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
+
+	// Check if the session is approved
+	status := session["status"].(string)
+	if status != "ok" {
+		http.Error(w, "Session is not approved for service creation", http.StatusForbidden)
+		return
+	}
+
+	// Proceed with service creation
+	result, err := cloud.CreateS3Bucket(req.BucketName, req.Versioning, req.Region)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create S3 bucket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Finalize the session
+	completeReq := struct {
+		SessionID string `json:"session_id"`
+		Status    string `json:"status"`
+	}{
+		SessionID: req.SessionID,
+		Status:    "completed",
+	}
+
+	completeData, _ := json.Marshal(completeReq)
+	http.Post("http://localhost:8080/complete-session", "application/json", bytes.NewReader(completeData))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }
 
-// Handler for creating Lambda function
+// CreateLambdaFunctionHandler handles requests to create a Lambda function
 func CreateLambdaFunctionHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		SessionID    string `json:"session_id"`
 		FunctionName string `json:"function_name"`
 		Handler      string `json:"handler"`
 		Runtime      string `json:"runtime"`
@@ -72,12 +141,39 @@ func CreateLambdaFunctionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Call the updated cloud function with a hardcoded role
-	result, err := cloud.CreateLambdaFunction(req.FunctionName, req.Handler, req.Runtime, req.ZipFilePath, req.Region)
+	// Fetch session details
+	var session bson.M
+	err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Could not create Lambda function: %v", err), http.StatusInternalServerError)
+		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
+
+	// Check if the session is approved
+	status := session["status"].(string)
+	if status != "ok" {
+		http.Error(w, "Session is not approved for service creation", http.StatusForbidden)
+		return
+	}
+
+	// Proceed with service creation
+	result, err := cloud.CreateLambdaFunction(req.FunctionName, req.Handler, req.Runtime, req.ZipFilePath, req.Region)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create Lambda function: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Finalize the session
+	completeReq := struct {
+		SessionID string `json:"session_id"`
+		Status    string `json:"status"`
+	}{
+		SessionID: req.SessionID,
+		Status:    "completed",
+	}
+
+	completeData, _ := json.Marshal(completeReq)
+	http.Post("http://localhost:8080/complete-session", "application/json", bytes.NewReader(completeData))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)

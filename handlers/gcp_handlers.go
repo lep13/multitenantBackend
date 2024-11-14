@@ -1,43 +1,86 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"multitenant/cloud"
+	"multitenant/db"
 	"multitenant/models"
 	"net/http"
+
+	"go.mongodb.org/mongo-driver/bson"
 )
 
-// CreateComputeEngineHandler handles GCP Compute Engine instance creation requests
+// CreateComputeEngineHandler handles requests to create a GCP Compute Engine instance
 func CreateComputeEngineHandler(w http.ResponseWriter, r *http.Request) {
-	var req models.GCPInstanceRequest
+	var req struct {
+		SessionID      string `json:"session_id"`
+		Name           string `json:"name"`
+		ProjectID      string `json:"project_id"`
+		Zone           string `json:"zone"`
+		MachineType    string `json:"machine_type"`
+		ImageProject   string `json:"image_project"`
+		ImageFamily    string `json:"image_family"`
+		Network        string `json:"network"`
+		Subnetwork     string `json:"subnetwork"`
+		ServiceAccount string `json:"service_account"`
+		Region         string `json:"region"`
+	}
 
-	// Decode the JSON request body
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	// Call the cloud function to create the instance
-	op, err := cloud.CreateComputeEngineInstance(req)
+	// Fetch session details
+	var session bson.M
+	err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Could not create Compute Engine instance: %v", err), http.StatusInternalServerError)
+		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 
-	// Extract meaningful data from the operation
-	operationName := op.Name()        // Call Name() method to get the string
-	// operationStatus := op.Status()   // Call Status() method to get the string
-
-	// Prepare a meaningful response
-	response := map[string]string{
-		"status":          "success",
-		"message":         fmt.Sprintf("VM '%s' was created successfully.", req.Name),
-		"operation_name":  operationName,
-		// "operation_status": operationStatus,
+	// Check if the session is approved
+	status := session["status"].(string)
+	if status != "ok" {
+		http.Error(w, "Session is not approved for service creation", http.StatusForbidden)
+		return
 	}
 
-	// Set the response header and encode the response
+	// Proceed with service creation
+	gcpRequest := models.GCPInstanceRequest{
+		Name:           req.Name,
+		ProjectID:      req.ProjectID,
+		Zone:           req.Zone,
+		MachineType:    req.MachineType,
+		ImageProject:   req.ImageProject,
+		ImageFamily:    req.ImageFamily,
+		Network:        req.Network,
+		Subnetwork:     req.Subnetwork,
+		ServiceAccount: req.ServiceAccount,
+		Region:         req.Region,
+	}
+
+	result, err := cloud.CreateComputeEngineInstance(gcpRequest)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create Compute Engine instance: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Finalize the session
+	completeReq := struct {
+		SessionID string `json:"session_id"`
+		Status    string `json:"status"`
+	}{
+		SessionID: req.SessionID,
+		Status:    "completed",
+	}
+
+	completeData, _ := json.Marshal(completeReq)
+	http.Post("http://localhost:8080/complete-session", "application/json", bytes.NewReader(completeData))
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(result)
 }
