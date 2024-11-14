@@ -21,19 +21,15 @@ func CreateManagerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate username and group limit
+	// Validate username
 	if request.Username == "admin" {
 		http.Error(w, "Username 'admin' is not allowed", http.StatusBadRequest)
 		return
 	}
 
-	// Check if group limit is a positive integer
-	if request.GroupLimit <= 0 {
-		http.Error(w, "Group limit must be a positive integer", http.StatusBadRequest)
-		return
-	}
 	// Call AddManager to add the manager
-	response := db.AddManager(request.Username, request.Password, request.GroupLimit)
+	response := db.AddManager(request.Username, request.Password, request.Email, request.GroupLimit)
+	w.Header().Set("Content-Type", "application/json")
 	// Set response header to JSON
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
@@ -45,6 +41,7 @@ func CreateManagerHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to send response", http.StatusInternalServerError)
 	}
 }
+
 
 func RemoveManagerHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {

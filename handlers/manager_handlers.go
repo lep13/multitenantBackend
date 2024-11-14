@@ -7,11 +7,12 @@ import (
 	"strings"
 )
 
-// CreateUserHandler handles the creation of a new user
+/// CreateUserHandler handles the creation of a new user
 func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 
 	err := json.NewDecoder(r.Body).Decode(&input)
@@ -20,17 +21,17 @@ func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := db.CreateUser(input.Username, input.Password)
-	// Send the response
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Failed to send response", http.StatusInternalServerError)
-	}
-	w.WriteHeader(http.StatusOK)
+	response := db.CreateUser(input.Username, input.Password, input.Email)
 
+	// Send the response
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to send response", http.StatusInternalServerError)
+	}
 }
 
 // CreateGroupHandler handles the creation of a new group
@@ -47,33 +48,32 @@ func CreateGroupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trim whitespace and check if Username or GroupName is empty
+	// Validate inputs
 	if strings.TrimSpace(input.Username) == "" || strings.TrimSpace(input.GroupName) == "" {
 		http.Error(w, "Username and group name cannot be empty or whitespace", http.StatusBadRequest)
 		return
 	}
 
-	// Attempt to create the group
+	// Call CreateGroup logic
 	response := db.CreateGroup(input.Username, input.GroupName)
-	// Send the response
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Failed to send response", http.StatusInternalServerError)
-	}
-	// Success response
-	w.WriteHeader(http.StatusOK)
 
+	// Send the response
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to send response", http.StatusInternalServerError)
+	}
 }
 
 // AddUserHandler adds an existing user to a group
 func AddUserHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Username  string `json:"username"`
-		GroupName string `json:"group_name"`
-		User      string `json:"user"`
+		Manager  string `json:"manager"`
+		GroupID  string `json:"group_id"`
+		Username string `json:"username"`
 	}
 
 	err := json.NewDecoder(r.Body).Decode(&input)
@@ -82,25 +82,21 @@ func AddUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := db.AddUserToGroup(input.Username, input.GroupName, input.User)
+	response := db.AddUserToGroup(input.Manager, input.GroupID, input.Username)
 	// Send the response
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "Failed to send response", http.StatusInternalServerError)
 	}
-	w.WriteHeader(http.StatusOK)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
 // RemoveUserHandler removes a user from a group
 func RemoveUserHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Username  string `json:"username"`
-		GroupName string `json:"group_name"`
-		User      string `json:"user"`
+		Manager  string `json:"manager"`
+		GroupID  string `json:"group_id"`
+		Username string `json:"username"`
 	}
 
 	err := json.NewDecoder(r.Body).Decode(&input)
@@ -109,18 +105,13 @@ func RemoveUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := db.RemoveUserFromGroup(input.Username, input.GroupName, input.User)
+	response := db.RemoveUserFromGroup(input.Manager, input.GroupID, input.Username)
 	// Send the response
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "Failed to send response", http.StatusInternalServerError)
 	}
-
-	w.WriteHeader(http.StatusOK)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
 // DeleteUserHandler handles the deletion of a user
@@ -165,45 +156,30 @@ func ListGroupsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
+// AddBudgetHandler assigns a budget to a group
 func AddBudgetHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Manager   string  `json:"manager"`
-		GroupName string  `json:"group_name"`
-		Budget    float64 `json:"budget"`
+		Manager  string  `json:"manager"`
+		GroupID  string  `json:"group_id"`
+		Budget   float64 `json:"budget"`
 	}
-	// Decode request body
+
 	err := json.NewDecoder(r.Body).Decode(&input)
 	if err != nil {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
 	}
-	// Validate input
-	if strings.TrimSpace(input.Manager) == "" || strings.TrimSpace(input.GroupName) == "" {
-		http.Error(w, "Manager and Group name cannot be empty or whitespace", http.StatusBadRequest)
-		return
-	}
 
-	if input.Budget <= 0 {
-		http.Error(w, "Budget must be greater than zero", http.StatusBadRequest)
-		return
-	}
-	// Call AddBudget function
-	response := db.AddBudget(input.Manager, input.GroupName, input.Budget)
+	response := db.AddBudget(input.Manager, input.GroupID, input.Budget)
 	// Send the response
-	w.Header().Set("Content-Type", "application/json")
-	if response.Status == "error" {
-		w.WriteHeader(http.StatusBadRequest)
-	} else {
-		w.WriteHeader(http.StatusOK)
-	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Failed to send response", http.StatusInternalServerError)
-	}
-	// Set CORS headers
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to send response", http.StatusInternalServerError)
+	}
 }
 
 func UpdateBudgetHandler(w http.ResponseWriter, r *http.Request) {

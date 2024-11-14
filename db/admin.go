@@ -12,24 +12,84 @@ import (
 )
 
 // AddManager adds a new manager and user to the respective collections
-func AddManager(username, password string, groupLimit int) models.ManagerResponse {
-    // Input validation with whitespace trimming
+func AddManager(username, password, email string, groupLimit int) models.ManagerResponse {
+    // Input validation
     if strings.TrimSpace(username) == "" {
         return models.ManagerResponse{
             Success: false,
-            Message: "username cannot be empty",
+            Message: "Username cannot be empty",
+        }
+    }
+    if !isValidUsernameLength(username) {
+        return models.ManagerResponse{
+            Success: false,
+            Message: "Username must be at least 6 characters long",
+        }
+    }
+    if !containsOnlyAllowedUsernameCharacters(username) {
+        return models.ManagerResponse{
+            Success: false,
+            Message: "Username can only contain alphabets, numbers, '-', and '_'",
+        }
+    }
+    if strings.Contains(username, " ") {
+        return models.ManagerResponse{
+            Success: false,
+            Message: "Username cannot contain spaces",
         }
     }
     if strings.TrimSpace(password) == "" {
         return models.ManagerResponse{
             Success: false,
-            Message: "password cannot be empty",
+            Message: "Password cannot be empty",
+        }
+    }
+    if !isValidPasswordLength(password) {
+        return models.ManagerResponse{
+            Success: false,
+            Message: "Password must be at least 6 characters long",
+        }
+    }
+    if !containsUppercase(password) {
+        return models.ManagerResponse{
+            Success: false,
+            Message: "Password must contain at least one uppercase letter",
+        }
+    }
+    if !containsLowercase(password) {
+        return models.ManagerResponse{
+            Success: false,
+            Message: "Password must contain at least one lowercase letter",
+        }
+    }
+    if !containsNumber(password) {
+        return models.ManagerResponse{
+            Success: false,
+            Message: "Password must contain at least one number",
+        }
+    }
+    if !containsSpecialCharacter(password) {
+        return models.ManagerResponse{
+            Success: false,
+            Message: "Password must contain at least one special character (!@#$%^&*)",
+        }
+    }
+    if strings.TrimSpace(email) == "" {
+        return models.ManagerResponse{
+            Success: false,
+            Message: "Email cannot be empty",
+        }
+    }
+    if !isValidEmail(email) {
+        return models.ManagerResponse{
+            Success: false,
+            Message: "Invalid email format. Email must contain '@' and '.com'",
         }
     }
     if groupLimit <= 0 {
         return models.ManagerResponse{
             Success: false,
-            Message: "group limit must be greater than zero",
+            Message: "Group limit must be greater than zero",
         }
     }
 
@@ -38,7 +98,7 @@ func AddManager(username, password string, groupLimit int) models.ManagerRespons
     if err != nil {
         return models.ManagerResponse{
             Success: false,
-            Message: fmt.Sprintf("could not connect to MongoDB: %v", err),
+            Message: fmt.Sprintf("Could not connect to MongoDB: %v", err),
         }
     }
     defer client.Disconnect(context.TODO())
@@ -53,46 +113,108 @@ func AddManager(username, password string, groupLimit int) models.ManagerRespons
     if err == nil {
         return models.ManagerResponse{
             Success: false,
-            Message: fmt.Sprintf("manager with username '%s' already exists", username),
+            Message: fmt.Sprintf("Username '%s' already exists", username),
         }
     } else if err != mongo.ErrNoDocuments {
         return models.ManagerResponse{
             Success: false,
-            Message: fmt.Sprintf("error checking for existing manager: %v", err),
+            Message: fmt.Sprintf("Error checking for existing manager: %v", err),
         }
     }
 
-    // Insert only the username and group limit into the managers collection
+    // Insert into managers collection
     manager := models.Manager{
         Username:   username,
+        Email:      email,
         GroupLimit: groupLimit,
     }
     _, err = managerCollection.InsertOne(context.Background(), manager)
     if err != nil {
         return models.ManagerResponse{
             Success: false,
-            Message: fmt.Sprintf("could not insert manager: %v", err),
+            Message: fmt.Sprintf("Could not insert manager: %v", err),
         }
     }
 
-    // Insert username, password, and "manager" tag into the users collection
+    // Insert into users collection
     user := models.User{
         Username: username,
         Password: password,
+        Email:    email,
         Tag:      "manager",
     }
     _, err = userCollection.InsertOne(context.Background(), user)
     if err != nil {
         return models.ManagerResponse{
             Success: false,
-            Message: fmt.Sprintf("manager created, but could not add user: %v", err),
+            Message: fmt.Sprintf("Manager created, but could not add user: %v", err),
         }
     }
 
     return models.ManagerResponse{
         Success: true,
-        Message: "manager created successfully",
+        Message: "Manager created successfully",
     }
+}
+
+// Helper functions for validation
+
+func isValidUsernameLength(username string) bool {
+    return len(username) >= 6
+}
+
+func containsOnlyAllowedUsernameCharacters(username string) bool {
+    for _, char := range username {
+        if !(char == '-' || char == '_' || (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9')) {
+            return false
+        }
+    }
+    return true
+}
+
+func isValidPasswordLength(password string) bool {
+    return len(password) >= 6
+}
+
+func containsUppercase(password string) bool {
+    for _, char := range password {
+        if char >= 'A' && char <= 'Z' {
+            return true
+        }
+    }
+    return false
+}
+
+func containsLowercase(password string) bool {
+    for _, char := range password {
+        if char >= 'a' && char <= 'z' {
+            return true
+        }
+    }
+    return false
+}
+
+func containsNumber(password string) bool {
+    for _, char := range password {
+        if char >= '0' && char <= '9' {
+            return true
+        }
+    }
+    return false
+}
+
+func containsSpecialCharacter(password string) bool {
+    specialChars := "!@#$%^&*"
+    for _, char := range password {
+        if strings.ContainsRune(specialChars, char) {
+            return true
+        }
+    }
+    return false
+}
+
+func isValidEmail(email string) bool {
+    return strings.Contains(email, "@") && strings.HasSuffix(email, ".com")
 }
 
 // RemoveManager removes a manager and corresponding user from the collections

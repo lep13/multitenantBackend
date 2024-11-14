@@ -2,9 +2,10 @@ package models
 
 // User represents a user document in MongoDB
 type User struct {
-	Username string `bson:"username"`
-	Password string `bson:"password"`
-	Tag      string `bson:"tag"`
+    Username string `bson:"username"`
+    Password string `bson:"password"`
+    Email    string `bson:"email"`
+    Tag      string `bson:"tag"`
 }
 
 // LoginRequest represents the structure of the login request

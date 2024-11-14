@@ -24,9 +24,9 @@ func InitializeRoutes() *mux.Router {
 	router.HandleFunc("/check-user-group", handlers.CheckUserGroupHandler).Methods("GET")
 
 	//user session management
-	router.HandleFunc("/get-cloud-services", handlers.GetCloudServicesHandler).Methods("GET")
-	router.HandleFunc("/start-session", handlers.StartSessionHandler).Methods("GET")
-	router.HandleFunc("/update-session", handlers.UpdateSessionHandler).Methods("POST")
+	// router.HandleFunc("/get-cloud-services", handlers.GetCloudServicesHandler).Methods("GET")
+	// router.HandleFunc("/start-session", handlers.StartSessionHandler).Methods("GET")
+	// router.HandleFunc("/update-session", handlers.UpdateSessionHandler).Methods("POST")
 
 	// routes for AWS service creation
 	router.HandleFunc("/create-ec2-instance", handlers.CreateEC2InstanceHandler).Methods("POST")
