@@ -103,7 +103,7 @@ func RemoveUserHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
-	}
+	} 
 
 	response := db.RemoveUserFromGroup(input.Manager, input.GroupID, input.Username)
 	// Send the response
@@ -139,22 +139,30 @@ func DeleteUserHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ListGroupsHandler(w http.ResponseWriter, r *http.Request) {
-	username := r.URL.Query().Get("username")
+    username := r.URL.Query().Get("username")
 
-	if username == "" {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
-		return
-	}
+    if username == "" {
+        http.Error(w, "Invalid input: username is required", http.StatusBadRequest)
+        return
+    }
 
-	response := db.ListGroupsByManager(username)
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Failed to send response", http.StatusInternalServerError)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
+    response := db.ListGroupsByManager(username)
+
+    // Set headers for the response
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+    // Send the response
+    if response.Status == "error" {
+        w.WriteHeader(http.StatusBadRequest)
+    } else {
+        w.WriteHeader(http.StatusOK)
+    }
+    json.NewEncoder(w).Encode(response)
 }
+
 
 // AddBudgetHandler assigns a budget to a group
 func AddBudgetHandler(w http.ResponseWriter, r *http.Request) {

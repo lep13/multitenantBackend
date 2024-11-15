@@ -101,7 +101,7 @@ func UpdateSessionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Session updated successfully"))
 }
 
-// CompleteSessionHandler finalizes the session and moves it to the services collection
+// finalizes the session and moves it to the services collection or deletes it if denied
 func CompleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `json:"session_id"`
@@ -121,7 +121,35 @@ func CompleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add timestamp and finalize the session
+	// Extract relevant fields
+	estimatedCost := session["estimated_cost"].(float64)
+	groupBudget := session["group_budget"].(float64)
+	username := session["username"].(string)
+
+	// Check if the session status is "denied"
+	if session["status"] == "denied" || estimatedCost > groupBudget {
+		// Delete the session from user_sessions collection
+		_, err := db.GetUserSessionCollection().DeleteOne(context.Background(), bson.M{"session_id": req.SessionID})
+		if err != nil {
+			http.Error(w, "Failed to delete denied session", http.StatusInternalServerError)
+			return
+		}
+
+		// Prepare and send the error response
+		response := map[string]interface{}{
+			"error":           "Insufficient budget",
+			"message":         fmt.Sprintf("User '%s', you don't have enough budget to create this service. Estimated cost: %.2f, Group budget: %.2f. Please request your manager for additional budget.", username, estimatedCost, groupBudget),
+			"estimated_cost":  estimatedCost,
+			"group_budget":    groupBudget,
+			"session_deleted": true,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Finalize the session if status is not "denied"
 	session["status"] = req.Status
 	session["timestamp"] = time.Now()
 	session["service_status"] = "running"

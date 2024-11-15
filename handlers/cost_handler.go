@@ -86,17 +86,93 @@ func CalculateCostHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// CalculateAWSCost calculates the quarterly cost for an AWS service.
+// CalculateAWSCost calculates the quarterly cost for an AWS service based on its pricing unit.
 func CalculateAWSCost(service string) (float64, error) {
 	// Fetch the hourly price for the service.
-	pricePerHour, err := fetchAWSServicePrice(service)
+	pricePerUnit, err := fetchAWSServicePrice(service)
 	if err != nil {
 		return 0, err
 	}
 
-	// Calculate cost for 90 days (quarter).
-	hoursPerQuarter := float64(24 * 90)
-	estimatedCost := hoursPerQuarter * pricePerHour
+	var estimatedCost float64
+
+	// Calculate cost based on service-specific units.
+	switch service {
+	case "Amazon EC2 (Elastic Compute Cloud)":
+		// EC2: Unit is USD/hour
+		hoursPerQuarter := float64(24 * 90) // 24 hours/day * 90 days
+		estimatedCost = pricePerUnit * hoursPerQuarter
+
+	case "Amazon S3 (Simple Storage Service)":
+		// S3: Unit is USD/GB/month
+		monthlyCost := pricePerUnit * 1024 // assuming 1TB = 1024GB
+		estimatedCost = monthlyCost * 3    // Quarterly cost (3 months)
+
+	case "AWS Lambda":
+		invocationsPerMonth := float64(1_000_000)   // 1 million invocations per month as float64
+		memoryAllocatedGB := 0.125                 // 128 MB memory allocated, converted to GB
+		secondsPerInvocation := float64(2)         // 2 seconds per invocation as float64
+	
+		pricePerGBSecond := pricePerUnit // Fetched using fetchAWSServicePrice
+		monthlyCost := pricePerGBSecond * memoryAllocatedGB * secondsPerInvocation * invocationsPerMonth
+
+		estimatedCost = monthlyCost * 3 // Multiply by 3 for quarterly cost
+		estimatedCost = math.Round(estimatedCost*100) / 100	
+
+	case "AWS CloudFront":
+		// CloudFront: Calculate cost for requests and data transfer
+		requestsPerMonth := float64(1_000_000) // assuming 1 million requests per month
+		dataTransferPerMonth := float64(100)   // assuming 100 GB data transfer per month
+		// CloudFront request pricing
+		requestPricePerUnit := 0.0075 / 10_000 // $0.0075 per 10,000 requests
+		requestCostPerMonth := (requestsPerMonth * requestPricePerUnit)
+		// CloudFront data transfer pricing
+		dataTransferPricePerUnit := 0.085 // $0.085 per GB for data transfer
+		dataTransferCostPerMonth := dataTransferPerMonth * dataTransferPricePerUnit
+		// S3 storage pricing
+		s3StoragePerGB := 0.023 // $0.023 per GB for S3 Standard
+		s3StorageSize := float64(100) // Assume 100 GB stored
+		s3StorageCost := s3StorageSize * s3StoragePerGB
+		// S3 GET request costs
+		s3GetRequestPricePerUnit := 0.0004 // $0.0004 per 1,000 GET requests
+		s3GetRequestCost := (requestsPerMonth / 1_000) * s3GetRequestPricePerUnit
+		// Total monthly cost
+		monthlyCost := requestCostPerMonth + dataTransferCostPerMonth + s3StorageCost + s3GetRequestCost
+		
+		estimatedCost = monthlyCost * 3 // Multiply by 3 for quarterly cost
+		estimatedCost = math.Round(estimatedCost*100) / 100	
+
+	case "Amazon RDS (Relational Database Service)":
+		// RDS: Unit is USD/hour
+		hoursPerQuarter := float64(24 * 90) // 24 hours/day * 90 days
+		estimatedCost = pricePerUnit * hoursPerQuarter
+
+	// case "Amazon DynamoDB":
+	// 	readCostPerMillion := 0.25   // $0.25 per million read requests
+	// 	writeCostPerMillion := 1.25 // $1.25 per million write requests
+	
+	// 	readCapacity := float64(5) // Default or fetched user input 
+	// 	writeCapacity := float64(5) // Default or fetched user input
+	
+	// 	secondsPerMonth := float64(24 * 60 * 60 * 30) // 30 days
+	// 	totalReadRequests := readCapacity * secondsPerMonth
+	// 	totalWriteRequests := writeCapacity * secondsPerMonth
+	
+	// 	readCost := (totalReadRequests / 1_000_000) * readCostPerMillion
+	// 	writeCost := (totalWriteRequests / 1_000_000) * writeCostPerMillion
+	
+	// 	monthlyCost := readCost + writeCost
+	// 	estimatedCost = monthlyCost * 3
+	// 	estimatedCost = math.Round(estimatedCost*100) / 100
+
+	case "Amazon VPC (Virtual Private Cloud)":
+		// VPC Endpoint: Unit is USD/hour
+		hoursPerQuarter := float64(24 * 90) // 24 hours/day * 90 days
+		estimatedCost = pricePerUnit * hoursPerQuarter
+
+	default:
+		return 0, fmt.Errorf("unsupported AWS service: %s", service)
+	}
 
 	// Round to 2 decimal places for clarity.
 	estimatedCost = math.Round(estimatedCost*100) / 100
@@ -142,11 +218,11 @@ func fetchAWSServicePrice(service string) (float64, error) {
 			{Field: aws.String("deploymentOption"), Value: aws.String("Single-AZ"), Type: types.FilterTypeTermMatch},
 			{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
 		}
-	case "Amazon DynamoDB":
-		filters = []types.Filter{
-			{Field: aws.String("usagetype"), Value: aws.String("DynamoDB-WriteCapacityUnit-Hrs"), Type: types.FilterTypeTermMatch},
-			{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
-		}
+	// case "Amazon DynamoDB":
+	// 	filters = []types.Filter{
+	// 		{Field: aws.String("usagetype"), Value: aws.String("DynamoDB-WriteCapacityUnit-Hrs"), Type: types.FilterTypeTermMatch},
+	// 		{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
+	// 	}
 	case "AWS CloudFront":
 		filters = []types.Filter{
 			{Field: aws.String("productFamily"), Value: aws.String("Request"), Type: types.FilterTypeTermMatch},
@@ -219,8 +295,8 @@ func serviceToCode(service string) string {
 		return "AWSLambda"
 	case "Amazon RDS (Relational Database Service)":
 		return "AmazonRDS"
-	case "Amazon DynamoDB":
-		return "AmazonDynamoDB"
+	// case "Amazon DynamoDB":
+	// 	return "AmazonDynamoDB"
 	case "AWS CloudFront":
 		return "AmazonCloudFront"
 	case "Amazon VPC (Virtual Private Cloud)":
