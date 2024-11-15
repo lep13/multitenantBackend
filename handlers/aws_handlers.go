@@ -179,73 +179,175 @@ func CreateLambdaFunctionHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-// // Handler for creating RDS instance
-// func CreateRDSInstanceHandler(w http.ResponseWriter, r *http.Request) {
-// 	var req struct {
-// 		DBName           string `json:"db_name"`
-// 		InstanceID       string `json:"instance_id"`
-// 		InstanceClass    string `json:"instance_class"`
-// 		Engine           string `json:"engine"`
-// 		Username         string `json:"username"`
-// 		Password         string `json:"password"`
-// 		AllocatedStorage int32  `json:"allocated_storage"`
-// 	}
+// Handler for creating RDS instance
+func CreateRDSInstanceHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID       string `json:"session_id"`
+		DBName          string `json:"db_name"`
+		InstanceID      string `json:"instance_id"`
+		InstanceClass   string `json:"instance_class"`
+		Engine          string `json:"engine"`
+		Username        string `json:"username"`
+		Password        string `json:"password"`
+		AllocatedStorage int32  `json:"allocated_storage"`
+		SubnetGroupName string `json:"subnet_group_name"`
+	}
 
-// 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-// 		http.Error(w, "Invalid input", http.StatusBadRequest)
-// 		return
-// 	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
 
-// 	result, err := cloud.CreateRDSInstance(req.DBName, req.InstanceID, req.InstanceClass, req.Engine, req.Username, req.Password, req.AllocatedStorage)
-// 	if err != nil {
-// 		http.Error(w, fmt.Sprintf("Could not create RDS instance: %v", err), http.StatusInternalServerError)
-// 		return
-// 	}
+	// Fetch session details
+	var session bson.M
+	err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
+	if err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
 
-// 	json.NewEncoder(w).Encode(result)
-// }
+	// Check if the session is approved
+	status := session["status"].(string)
+	if status != "ok" {
+		http.Error(w, "Session is not approved for service creation", http.StatusForbidden)
+		return
+	}
 
-// // Handler for creating DynamoDB table
-// func CreateDynamoDBTableHandler(w http.ResponseWriter, r *http.Request) {
-// 	var req struct {
-// 		TableName     string `json:"table_name"`
-// 		ReadCapacity  int64  `json:"read_capacity"`
-// 		WriteCapacity int64  `json:"write_capacity"`
-// 	}
+	// Proceed with RDS instance creation
+	result, err := cloud.CreateRDSInstance(req.DBName, req.InstanceID, req.InstanceClass, req.Engine, req.Username, req.Password, req.AllocatedStorage, req.SubnetGroupName)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Could not create RDS instance: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-// 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-// 		http.Error(w, "Invalid input", http.StatusBadRequest)
-// 		return
-// 	}
+	// Finalize the session
+	completeReq := struct {
+		SessionID string `json:"session_id"`
+		Status    string `json:"status"`
+	}{
+		SessionID: req.SessionID,
+		Status:    "completed",
+	}
 
-// 	result, err := cloud.CreateDynamoDBTable(req.TableName, req.ReadCapacity, req.WriteCapacity)
-// 	if err != nil {
-// 		http.Error(w, fmt.Sprintf("Could not create DynamoDB table: %v", err), http.StatusInternalServerError)
-// 		return
-// 	}
+	completeData, _ := json.Marshal(completeReq)
+	http.Post("http://localhost:8080/complete-session", "application/json", bytes.NewReader(completeData))
 
-// 	json.NewEncoder(w).Encode(result)
-// }
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
 
-// // Handler for creating CloudFront distribution
-// func CreateCloudFrontDistributionHandler(w http.ResponseWriter, r *http.Request) {
-// 	var req struct {
-// 		OriginDomainName string `json:"origin_domain_name"`
-// 	}
+// Handler for creating DynamoDB table
+func CreateDynamoDBTableHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID     string `json:"session_id"`
+		TableName     string `json:"table_name"`
+		Region        string `json:"region"` // Region as input
+		ReadCapacity  int64  `json:"read_capacity"`
+		WriteCapacity int64  `json:"write_capacity"`
+	}
 
-// 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-// 		http.Error(w, "Invalid input", http.StatusBadRequest)
-// 		return
-// 	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
 
-// 	result, err := cloud.CreateCloudFrontDistribution(req.OriginDomainName)
-// 	if err != nil {
-// 		http.Error(w, fmt.Sprintf("Could not create CloudFront distribution: %v", err), http.StatusInternalServerError)
-// 		return
-// 	}
+	if req.Region == "" {
+		http.Error(w, "Region is required", http.StatusBadRequest)
+		return
+	}
 
-// 	json.NewEncoder(w).Encode(result)
-// }
+	// Fetch session details
+	var session bson.M
+	err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
+	if err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	// Check if the session is approved
+	status, ok := session["status"].(string)
+	if !ok || status != "ok" {
+		http.Error(w, "Session is not approved for service creation", http.StatusForbidden)
+		return
+	}
+
+	// Proceed with DynamoDB table creation
+	result, err := cloud.CreateDynamoDBTable(req.TableName, req.Region, req.ReadCapacity, req.WriteCapacity)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Could not create DynamoDB table: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Finalize the session
+	completeReq := struct {
+		SessionID string `json:"session_id"`
+		Status    string `json:"status"`
+	}{
+		SessionID: req.SessionID,
+		Status:    "completed",
+	}
+
+	completeData, _ := json.Marshal(completeReq)
+	http.Post("http://localhost:8080/complete-session", "application/json", bytes.NewReader(completeData))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+// Handler for creating CloudFront distribution
+func CreateCloudFrontDistributionHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID        string `json:"session_id"`
+		OriginDomainName string `json:"origin_domain_name"`
+		CallerReference  string `json:"caller_reference"`
+		Comment          string `json:"comment"`
+		Region           string `json:"region"`
+		MinTTL           int64  `json:"min_ttl"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch session details
+	var session bson.M
+	err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
+	if err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	// Check if the session is approved
+	status := session["status"].(string)
+	if status != "ok" {
+		http.Error(w, "Session is not approved for service creation", http.StatusForbidden)
+		return
+	}
+
+	// Proceed with CloudFront distribution creation
+	result, err := cloud.CreateCloudFrontDistribution(req.OriginDomainName, req.CallerReference, req.Comment, req.Region, req.MinTTL)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Could not create CloudFront distribution: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Finalize the session
+	completeReq := struct {
+		SessionID string `json:"session_id"`
+		Status    string `json:"status"`
+	}{
+		SessionID: req.SessionID,
+		Status:    "completed",
+	}
+
+	completeData, _ := json.Marshal(completeReq)
+	http.Post("http://localhost:8080/complete-session", "application/json", bytes.NewReader(completeData))
+
+	// Respond with the creation result
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
 
 // // Handler for creating VPC
 // func CreateVPCHandler(w http.ResponseWriter, r *http.Request) {

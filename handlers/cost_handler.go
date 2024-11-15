@@ -103,7 +103,6 @@ func CalculateAWSCost(service string) (float64, error) {
 	return estimatedCost, nil
 }
 
-// fetchAWSServicePrice fetches the default hourly price for common configurations of AWS services.
 func fetchAWSServicePrice(service string) (float64, error) {
 	// Load AWS configuration (pricing data is only available in us-east-1 region)
 	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion("us-east-1"))
@@ -127,8 +126,8 @@ func fetchAWSServicePrice(service string) (float64, error) {
 		}
 	case "Amazon S3 (Simple Storage Service)":
 		filters = []types.Filter{
-			{Field: aws.String("usagetype"), Value: aws.String("TimedStorage-ByteHrs"), Type: types.FilterTypeTermMatch},
-			{Field: aws.String("storageClass"), Value: aws.String("Standard"), Type: types.FilterTypeTermMatch},
+			{Field: aws.String("productFamily"), Value: aws.String("Storage"), Type: types.FilterTypeTermMatch},
+			{Field: aws.String("storageClass"), Value: aws.String("General Purpose"), Type: types.FilterTypeTermMatch},
 			{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
 		}
 	case "AWS Lambda":
@@ -150,14 +149,16 @@ func fetchAWSServicePrice(service string) (float64, error) {
 		}
 	case "AWS CloudFront":
 		filters = []types.Filter{
-			{Field: aws.String("usagetype"), Value: aws.String("CloudFront-Requests-Tier1"), Type: types.FilterTypeTermMatch},
+			{Field: aws.String("productFamily"), Value: aws.String("Request"), Type: types.FilterTypeTermMatch},
+			{Field: aws.String("usagetype"), Value: aws.String("USE1-Requests-OriginShield"), Type: types.FilterTypeTermMatch}, // Correct usage type
 			{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
-		}
+		}	
 	case "Amazon VPC (Virtual Private Cloud)":
 		filters = []types.Filter{
-			{Field: aws.String("productFamily"), Value: aws.String("NAT Gateway"), Type: types.FilterTypeTermMatch},
+			{Field: aws.String("productFamily"), Value: aws.String("VpcEndpoint"), Type: types.FilterTypeTermMatch},
+			{Field: aws.String("endpointType"), Value: aws.String("Gateway Load Balancer Endpoint"), Type: types.FilterTypeTermMatch},
 			{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
-		}
+		}	
 	default:
 		return 0, fmt.Errorf("unsupported AWS service: %s", service)
 	}

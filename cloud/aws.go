@@ -2,21 +2,20 @@ package cloud
 
 import (
 	"fmt"
-	"os/exec"
 	"os"
 	"context"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	// "github.com/aws/aws-sdk-go-v2/service/cloudfront"
-	// cloudfronttypes "github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
-	// "github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	// dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
+	cloudfronttypes "github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types" 
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
-	// "github.com/aws/aws-sdk-go-v2/service/rds"
+	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -32,41 +31,6 @@ func InitAWS() error {
         return fmt.Errorf("unable to load SDK config, %v", err)
     }
     return nil
-}
-
-// Run Terraform Apply
-func ApplyTerraform() error {
-	cmd := exec.Command("terraform", "apply", "-auto-approve")
-	cmd.Dir = "./terraform" // Set the working directory to where Terraform files are located
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("error applying Terraform: %v - %s", err, output)
-	}
-	fmt.Println(string(output))
-	return nil
-}
-
-// Run Terraform Destroy
-func DestroyTerraform() error {
-	cmd := exec.Command("terraform", "destroy", "-auto-approve")
-	cmd.Dir = "./terraform"
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("error destroying resources: %v - %s", err, output)
-	}
-	fmt.Println(string(output))
-	return nil
-}
-
-// Retrieve Terraform Outputs (e.g., for instance ID or public IP)
-func GetTerraformOutput(outputName string) (string, error) {
-	cmd := exec.Command("terraform", "output", "-raw", outputName)
-	cmd.Dir = "./terraform"
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("error retrieving output '%s': %v", outputName, err)
-	}
-	return string(output), nil
 }
 
 // EC2 Instance Creation
@@ -161,95 +125,119 @@ func CreateLambdaFunction(functionName, handler, runtime, zipFilePath, region st
 	return result, nil
 }
 
-// // RDS Instance Creation
-// func CreateRDSInstance(dbName, instanceID, instanceClass, engine, username, password string, allocatedStorage int32) (*rds.CreateDBInstanceOutput, error) {
-// 	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion("us-east-1"))
-// 	if err != nil {
-// 		return nil, fmt.Errorf("unable to load config: %v", err)
-// 	}
-// 	rdsClient := rds.NewFromConfig(cfg)
+// RDS Instance Creation
+func CreateRDSInstance(dbName, instanceID, instanceClass, engine, username, password string, allocatedStorage int32, subnetGroupName string) (*rds.CreateDBInstanceOutput, error) {
+	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion("us-east-1"))
+	if err != nil {
+		return nil, fmt.Errorf("unable to load config: %v", err)
+	}
+	rdsClient := rds.NewFromConfig(cfg)
 
-// 	input := &rds.CreateDBInstanceInput{
-// 		DBName:               aws.String(dbName),
-// 		DBInstanceIdentifier: aws.String(instanceID),
-// 		DBInstanceClass:      aws.String(instanceClass),
-// 		Engine:               aws.String(engine),
-// 		MasterUsername:       aws.String(username),
-// 		MasterUserPassword:   aws.String(password),
-// 		AllocatedStorage:     aws.Int32(allocatedStorage),
-// 	}
+	input := &rds.CreateDBInstanceInput{
+		DBName:               aws.String(dbName),
+		DBInstanceIdentifier: aws.String(instanceID),
+		DBInstanceClass:      aws.String(instanceClass),
+		Engine:               aws.String(engine),
+		MasterUsername:       aws.String(username),
+		MasterUserPassword:   aws.String(password),
+		AllocatedStorage:     aws.Int32(allocatedStorage),
+		DBSubnetGroupName:    aws.String(subnetGroupName), // Add the subnet group
+	}
 
-// 	result, err := rdsClient.CreateDBInstance(context.TODO(), input)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("could not create RDS instance: %v", err)
-// 	}
-// 	return result, nil
-// }
+	result, err := rdsClient.CreateDBInstance(context.TODO(), input)
+	if err != nil {
+		return nil, fmt.Errorf("could not create RDS instance: %v", err)
+	}
+	return result, nil
+}
 
-// // DynamoDB Table Creation
-// func CreateDynamoDBTable(tableName string, readCapacity, writeCapacity int64) (*dynamodb.CreateTableOutput, error) {
-// 	dynamoClient := dynamodb.NewFromConfig(cfg)
+func CreateDynamoDBTable(tableName, region string, readCapacity, writeCapacity int64) (*dynamodb.CreateTableOutput, error) {
+	// Load AWS configuration with the provided region
+	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(region))
+	if err != nil {
+		return nil, fmt.Errorf("unable to load AWS config: %v", err)
+	}
 
-// 	input := &dynamodb.CreateTableInput{
-// 		TableName: aws.String(tableName),
-// 		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
-// 			{
-// 				AttributeName: aws.String("PrimaryKey"),
-// 				AttributeType: dynamodbtypes.ScalarAttributeTypeS,
-// 			},
-// 		},
-// 		KeySchema: []dynamodbtypes.KeySchemaElement{
-// 			{
-// 				AttributeName: aws.String("PrimaryKey"),
-// 				KeyType:       dynamodbtypes.KeyTypeHash,
-// 			},
-// 		},
-// 		ProvisionedThroughput: &dynamodbtypes.ProvisionedThroughput{
-// 			ReadCapacityUnits:  aws.Int64(readCapacity),
-// 			WriteCapacityUnits: aws.Int64(writeCapacity),
-// 		},
-// 	}
+	dynamoClient := dynamodb.NewFromConfig(cfg)
 
-// 	result, err := dynamoClient.CreateTable(context.TODO(), input)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("could not create DynamoDB table: %v", err)
-// 	}
-// 	return result, nil
-// }
+	input := &dynamodb.CreateTableInput{
+		TableName: aws.String(tableName),
+		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
+			{
+				AttributeName: aws.String("PrimaryKey"),
+				AttributeType: dynamodbtypes.ScalarAttributeTypeS,
+			},
+		},
+		KeySchema: []dynamodbtypes.KeySchemaElement{
+			{
+				AttributeName: aws.String("PrimaryKey"),
+				KeyType:       dynamodbtypes.KeyTypeHash,
+			},
+		},
+		ProvisionedThroughput: &dynamodbtypes.ProvisionedThroughput{
+			ReadCapacityUnits:  aws.Int64(readCapacity),
+			WriteCapacityUnits: aws.Int64(writeCapacity),
+		},
+	}
 
-// // CloudFront Distribution Creation
-// func CreateCloudFrontDistribution(originDomainName string) (*cloudfront.CreateDistributionOutput, error) {
-// 	cloudFrontClient := cloudfront.NewFromConfig(cfg)
+	result, err := dynamoClient.CreateTable(context.TODO(), input)
+	if err != nil {
+		return nil, fmt.Errorf("could not create DynamoDB table: %v", err)
+	}
+	return result, nil
+}
 
-// 	input := &cloudfront.CreateDistributionInput{
-// 		DistributionConfig: &cloudfronttypes.DistributionConfig{
-// 			Enabled: aws.Bool(true),
-// 			Origins: &cloudfronttypes.Origins{
-// 				Quantity: aws.Int32(1),
-// 				Items: []cloudfronttypes.Origin{
-// 					{
-// 						Id:         aws.String("Origin1"),
-// 						DomainName: aws.String(originDomainName),
-// 					},
-// 				},
-// 			},
-// 			DefaultCacheBehavior: &cloudfronttypes.DefaultCacheBehavior{
-// 				TargetOriginId:       aws.String("Origin1"),
-// 				ViewerProtocolPolicy: cloudfronttypes.ViewerProtocolPolicyAllowAll,
-// 				AllowedMethods: &cloudfronttypes.AllowedMethods{
-// 					Quantity: aws.Int32(2),
-// 					Items:    []cloudfronttypes.Method{cloudfronttypes.MethodGet, cloudfronttypes.MethodHead},
-// 				},
-// 			},
-// 		},
-// 	}
+// CloudFront Distribution Creation
+func CreateCloudFrontDistribution(originDomainName, callerReference, comment, region string, minTTL int64) (*cloudfront.CreateDistributionOutput, error) {
+	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
+	if err != nil {
+		return nil, fmt.Errorf("unable to load config: %v", err)
+	}
+	cloudFrontClient := cloudfront.NewFromConfig(cfg)
 
-// 	result, err := cloudFrontClient.CreateDistribution(context.TODO(), input)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("could not create CloudFront distribution: %v", err)
-// 	}
-// 	return result, nil
-// }
+	input := &cloudfront.CreateDistributionInput{
+		DistributionConfig: &cloudfronttypes.DistributionConfig{
+			CallerReference: aws.String(callerReference),
+			Enabled:         aws.Bool(true),
+			Comment:         aws.String(comment),
+			Origins: &cloudfronttypes.Origins{
+				Quantity: aws.Int32(1),
+				Items: []cloudfronttypes.Origin{
+					{
+						Id:         aws.String("Origin1"),
+						DomainName: aws.String(originDomainName),
+						CustomOriginConfig: &cloudfronttypes.CustomOriginConfig{
+							HTTPPort:             aws.Int32(80),
+							HTTPSPort:            aws.Int32(443),
+							OriginProtocolPolicy: cloudfronttypes.OriginProtocolPolicyMatchViewer,
+						},
+					},
+				},
+			},
+			DefaultCacheBehavior: &cloudfronttypes.DefaultCacheBehavior{
+				TargetOriginId:       aws.String("Origin1"),
+				ViewerProtocolPolicy: cloudfronttypes.ViewerProtocolPolicyRedirectToHttps,
+				AllowedMethods: &cloudfronttypes.AllowedMethods{
+					Quantity: aws.Int32(2),
+					Items:    []cloudfronttypes.Method{cloudfronttypes.MethodGet, cloudfronttypes.MethodHead},
+				},
+				ForwardedValues: &cloudfronttypes.ForwardedValues{
+					QueryString: aws.Bool(false),
+					Cookies: &cloudfronttypes.CookiePreference{
+						Forward: cloudfronttypes.ItemSelectionNone,
+					},
+				},
+				MinTTL: aws.Int64(minTTL), // Use the input value
+			},
+		},
+	}
+
+	result, err := cloudFrontClient.CreateDistribution(context.TODO(), input)
+	if err != nil {
+		return nil, fmt.Errorf("could not create CloudFront distribution: %v", err)
+	}
+	return result, nil
+}
 
 // // VPC Creation
 // func CreateVPC(cidrBlock string) (*ec2.CreateVpcOutput, error) {
