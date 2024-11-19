@@ -369,9 +369,9 @@ func FetchGCPServicePrice(service string) (float64, string, error) {
 
 	// Map service names to their display names in the Cloud Catalog
 	serviceMap := map[string]string{
-		"Compute Engine":                "Compute Engine",
-		"Cloud Storage":                 "Cloud Storage",
-		"Cloud SQL":                     "Cloud SQL",
+		"Compute Engine": "Compute Engine",
+		"Cloud Storage":  "Cloud Storage",
+		"Cloud SQL":      "Cloud SQL",
 	}
 
 	displayName, exists := serviceMap[service]
@@ -407,33 +407,45 @@ func FetchGCPServicePrice(service string) (float64, string, error) {
 					return 0, "", fmt.Errorf("error while iterating SKUs: %v", err)
 				}
 
-				// Compute Engine
+				// **Compute Engine**: Focus on general-purpose n1-standard-1 vCPUs
 				if service == "Compute Engine" && sku.Category.ResourceFamily == "Compute" {
-					if sku.PricingInfo != nil && len(sku.PricingInfo) > 0 {
-						pricing := sku.PricingInfo[0].PricingExpression
-						if pricing != nil && len(pricing.TieredRates) > 0 && pricing.UsageUnit == "h" {
-							price := pricing.TieredRates[0].UnitPrice
-							return float64(price.Units) + float64(price.Nanos)/1e9, pricing.UsageUnitDescription, nil
+					if strings.Contains(sku.Description, "N1 Predefined Instance Core") {
+						if sku.PricingInfo != nil && len(sku.PricingInfo) > 0 {
+							pricing := sku.PricingInfo[0].PricingExpression
+							if len(pricing.TieredRates) > 0 && pricing.UsageUnit == "h" {
+								price := pricing.TieredRates[0].UnitPrice
+								return float64(price.Units) + float64(price.Nanos)/1e9, pricing.UsageUnitDescription, nil
+							}
 						}
 					}
 				}
 
-				// Cloud Storage
-				if sku.Category.ResourceFamily == "Storage" && service == "Cloud Storage" {
-					if sku.PricingInfo != nil && len(sku.PricingInfo) > 0 {
-						pricing := sku.PricingInfo[0].PricingExpression
-						if pricing != nil && len(pricing.TieredRates) > 0 && pricing.UsageUnit == "GiBy.mo" {
-							price := pricing.TieredRates[0].UnitPrice
-							return float64(price.Units) + float64(price.Nanos)/1e9, pricing.UsageUnitDescription, nil
+				// **Cloud SQL**: Focus on MySQL, PostgreSQL, or SQL Server SKUs
+				if service == "Cloud SQL" && sku.Category.ResourceFamily == "Database" {
+					// Match descriptions for typical configurations
+					if strings.Contains(sku.Description, "MySQL") || 
+						strings.Contains(sku.Description, "PostgreSQL") || 
+						strings.Contains(sku.Description, "SQL Server") || 
+						strings.Contains(sku.Description, "db-n1-standard-4") {
+						
+						// Ensure pricing info exists
+						if sku.PricingInfo != nil && len(sku.PricingInfo) > 0 {
+							pricing := sku.PricingInfo[0].PricingExpression
+
+							// Ensure hourly pricing
+							if len(pricing.TieredRates) > 0 && pricing.UsageUnit == "h" {
+								// Extract the first tier price
+								price := pricing.TieredRates[0].UnitPrice
+								return float64(price.Units) + float64(price.Nanos)/1e9, pricing.UsageUnitDescription, nil
+							}
 						}
 					}
 				}
-
-				// Cloud SQL
-				if service == "Cloud SQL" && strings.Contains(sku.Description, "MySQL") && strings.Contains(sku.Description, "vCPU") {
-					if sku.PricingInfo != nil && len(sku.PricingInfo) > 0 {
+				// **Cloud Storage**: No changes, already correct
+				if service == "Cloud Storage" && sku.Category.ResourceFamily == "Storage" {
+					if strings.Contains(sku.Description, "Standard Storage") && sku.PricingInfo != nil {
 						pricing := sku.PricingInfo[0].PricingExpression
-						if pricing != nil && len(pricing.TieredRates) > 0 {
+						if len(pricing.TieredRates) > 0 && pricing.UsageUnit == "GiBy.mo" {
 							price := pricing.TieredRates[0].UnitPrice
 							return float64(price.Units) + float64(price.Nanos)/1e9, pricing.UsageUnitDescription, nil
 						}
@@ -445,8 +457,6 @@ func FetchGCPServicePrice(service string) (float64, string, error) {
 
 	return 0, "", fmt.Errorf("pricing data not found for service: %s", service)
 }
-
-
 
 // FetchGCPServicePriceHandler handles requests to fetch the minimum pricing for a GCP service.
 func FetchGCPServicePriceHandler(w http.ResponseWriter, r *http.Request) {
