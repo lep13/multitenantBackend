@@ -1,11 +1,15 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"multitenant/config"
+	"net/http"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -46,9 +50,9 @@ func GenerateSessionID() string {
 // StartSession starts a new session for a user
 func StartSession(username, provider string) (string, error) {
 	var group struct {
-		Groupname     string  `bson:"group_name"`
-		GroupID       string  `bson:"group_id"`
-		TotalBudget   float64 `bson:"budget"`
+		Groupname   string  `bson:"group_name"`
+		GroupID     string  `bson:"group_id"`
+		TotalBudget float64 `bson:"budget"`
 		// CurrentBudget float64 `bson:"current_budget,omitempty"`
 	}
 
@@ -72,13 +76,13 @@ func StartSession(username, provider string) (string, error) {
 	// Create and store session
 	sessionID := GenerateSessionID()
 	session := bson.M{
-		"username":       username,
-		"groupname":      group.Groupname,
-		"group_id":       group.GroupID,
-		"provider":       provider,
-		"session_id":     sessionID,
-		"status":         "in-progress",
-		"group_budget":   group.TotalBudget,
+		"username":     username,
+		"groupname":    group.Groupname,
+		"group_id":     group.GroupID,
+		"provider":     provider,
+		"session_id":   sessionID,
+		"status":       "in-progress",
+		"group_budget": group.TotalBudget,
 		// "current_budget": group.CurrentBudget,
 	}
 
@@ -135,6 +139,38 @@ func UpdateSessionWithCost(sessionID string, estimatedCost float64, status strin
 	}
 
 	return status, nil
+}
+
+// sends a POST request to finalize a session using the user's JWT token
+func FinalizeSessionWithJWT(sessionID, token string) error {
+	// Prepare the request payload
+	completeReq := struct {
+		SessionID string `json:"session_id"`
+	}{
+		SessionID: sessionID,
+	}
+	completeData, _ := json.Marshal(completeReq)
+
+	// Create a new POST request
+	client := &http.Client{}
+	request, _ := http.NewRequest("POST", "http://localhost:8080/user/complete-session", bytes.NewReader(completeData))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", token)
+
+	// Execute the request
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("failed to finalize session: %v", err)
+	}
+	defer response.Body.Close()
+
+	// Check the response status
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		return fmt.Errorf("failed to finalize session: %s", body)
+	}
+
+	return nil
 }
 
 // DeleteSession deletes an incomplete session

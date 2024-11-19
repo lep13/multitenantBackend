@@ -8,17 +8,19 @@ import (
 	"multitenant/db"
 	"net/http"
 	"strconv"
+	"strings"
 
+	billing "cloud.google.com/go/billing/apiv1"
+	"cloud.google.com/go/billing/apiv1/billingpb"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
 	"github.com/aws/aws-sdk-go-v2/service/pricing/types"
 	"github.com/aws/aws-sdk-go/aws"
 	"go.mongodb.org/mongo-driver/bson"
-	"google.golang.org/api/cloudbilling/v1"
-	"google.golang.org/api/option"
+	"google.golang.org/api/iterator"
 )
 
-// CalculateCostHandler calculates the estimated cost of a service
+// calculates the estimated cost of a service
 func CalculateCostHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `json:"session_id"`
@@ -48,26 +50,84 @@ func CalculateCostHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Calculate cost
 	var estimatedCost float64
+	var status string
+	var message string
+
 	if provider == "aws" {
-		estimatedCost, err = CalculateAWSCost(service)
+		switch service {
+		case "Amazon EC2 (Elastic Compute Cloud)", "Amazon S3 (Simple Storage Service)", "Amazon RDS (Relational Database Service)":
+			// For EC2, S3, and RDS, calculate estimated cost
+			estimatedCost, err = CalculateAWSCost(service)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to calculate cost: %v", err), http.StatusInternalServerError)
+				return
+			}
+			// Compare the estimated cost with the budget
+			if estimatedCost > budget {
+				status = "denied"
+				message = fmt.Sprintf(
+					"Estimated cost of this service is $%.2f, which exceeds your budget of $%.2f. Request denied.",
+					estimatedCost, budget,
+				)
+			} else {
+				status = "ok"
+				message = fmt.Sprintf(
+					"Estimated cost of this service is $%.2f. Your budget is $%.2f. You can proceed with the service creation.",
+					estimatedCost, budget,
+				)
+			}
+
+		case "Amazon VPC (Virtual Private Cloud)", "AWS Lambda", "Amazon DynamoDB", "AWS CloudFront":
+			// No cost calculation for these services
+			status = "ok"
+			message = fmt.Sprintf(
+				"Estimated cost cannot be calculated for this service. Your budget is $%.2f. Do you want to create it?",
+				budget,
+			)
+
+		default:
+			http.Error(w, "Unsupported AWS service", http.StatusBadRequest)
+			return
+		}
 	} else if provider == "gcp" {
-		estimatedCost, err = CalculateGCPCost(service)
+		switch service {
+		case "Compute Engine", "Cloud Storage", "Cloud SQL":
+			// For Compute Engine, Cloud Storage, and Cloud SQL, calculate estimated cost
+			estimatedCost, err = CalculateGCPCost(service)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to calculate cost: %v", err), http.StatusInternalServerError)
+				return
+			}
+			// Compare the estimated cost with the budget
+			if estimatedCost > budget {
+				status = "denied"
+				message = fmt.Sprintf(
+					"Estimated cost of this service is $%.2f, which exceeds your budget of $%.2f. Request denied.",
+					estimatedCost, budget,
+				)
+			} else {
+				status = "ok"
+				message = fmt.Sprintf(
+					"Estimated cost of this service is $%.2f. Your budget is $%.2f. You can proceed with the service creation.",
+					estimatedCost, budget,
+				)
+			}
+
+		case "Google Kubernetes Engine (GKE)", "BigQuery", "Cloud Functions":
+			// No cost calculation for these services
+			status = "ok"
+			message = fmt.Sprintf(
+				"Estimated cost cannot be calculated for this service. Your budget is $%.2f. Do you want to create it?",
+				budget,
+			)
+
+		default:
+			http.Error(w, "Unsupported GCP service", http.StatusBadRequest)
+			return
+		}
 	} else {
 		http.Error(w, "Unsupported cloud provider", http.StatusBadRequest)
 		return
-	}
-
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to calculate cost: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Compare the estimated cost with the budget
-	var status string
-	if estimatedCost > budget {
-		status = "denied"
-	} else {
-		status = "ok"
 	}
 
 	// Update session with estimated cost and status
@@ -77,10 +137,12 @@ func CalculateCostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Respond with the status and estimated cost
+	// Respond with the status, estimated cost, budget, and message
 	response := map[string]interface{}{
 		"status":         status,
 		"estimated_cost": estimatedCost,
+		"budget":         budget,
+		"message":        message,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -91,6 +153,10 @@ func CalculateAWSCost(service string) (float64, error) {
 	// Fetch the hourly price for the service.
 	pricePerUnit, err := fetchAWSServicePrice(service)
 	if err != nil {
+		// Return 0 cost and no error for services where cost calculation isn't supported.
+		if strings.Contains(err.Error(), "cost fetching is not supported") {
+			return 0, nil
+		}
 		return 0, err
 	}
 
@@ -105,73 +171,17 @@ func CalculateAWSCost(service string) (float64, error) {
 
 	case "Amazon S3 (Simple Storage Service)":
 		// S3: Unit is USD/GB/month
-		monthlyCost := pricePerUnit * 1024 // assuming 1TB = 1024GB
+		monthlyCost := pricePerUnit * 1024 // 1TB = 1024GB
 		estimatedCost = monthlyCost * 3    // Quarterly cost (3 months)
-
-	case "AWS Lambda":
-		invocationsPerMonth := float64(1_000_000)   // 1 million invocations per month as float64
-		memoryAllocatedGB := 0.125                 // 128 MB memory allocated, converted to GB
-		secondsPerInvocation := float64(2)         // 2 seconds per invocation as float64
-	
-		pricePerGBSecond := pricePerUnit // Fetched using fetchAWSServicePrice
-		monthlyCost := pricePerGBSecond * memoryAllocatedGB * secondsPerInvocation * invocationsPerMonth
-
-		estimatedCost = monthlyCost * 3 // Multiply by 3 for quarterly cost
-		estimatedCost = math.Round(estimatedCost*100) / 100	
-
-	case "AWS CloudFront":
-		// CloudFront: Calculate cost for requests and data transfer
-		requestsPerMonth := float64(1_000_000) // assuming 1 million requests per month
-		dataTransferPerMonth := float64(100)   // assuming 100 GB data transfer per month
-		// CloudFront request pricing
-		requestPricePerUnit := 0.0075 / 10_000 // $0.0075 per 10,000 requests
-		requestCostPerMonth := (requestsPerMonth * requestPricePerUnit)
-		// CloudFront data transfer pricing
-		dataTransferPricePerUnit := 0.085 // $0.085 per GB for data transfer
-		dataTransferCostPerMonth := dataTransferPerMonth * dataTransferPricePerUnit
-		// S3 storage pricing
-		s3StoragePerGB := 0.023 // $0.023 per GB for S3 Standard
-		s3StorageSize := float64(100) // Assume 100 GB stored
-		s3StorageCost := s3StorageSize * s3StoragePerGB
-		// S3 GET request costs
-		s3GetRequestPricePerUnit := 0.0004 // $0.0004 per 1,000 GET requests
-		s3GetRequestCost := (requestsPerMonth / 1_000) * s3GetRequestPricePerUnit
-		// Total monthly cost
-		monthlyCost := requestCostPerMonth + dataTransferCostPerMonth + s3StorageCost + s3GetRequestCost
-		
-		estimatedCost = monthlyCost * 3 // Multiply by 3 for quarterly cost
-		estimatedCost = math.Round(estimatedCost*100) / 100	
 
 	case "Amazon RDS (Relational Database Service)":
 		// RDS: Unit is USD/hour
 		hoursPerQuarter := float64(24 * 90) // 24 hours/day * 90 days
 		estimatedCost = pricePerUnit * hoursPerQuarter
 
-	// case "Amazon DynamoDB":
-	// 	readCostPerMillion := 0.25   // $0.25 per million read requests
-	// 	writeCostPerMillion := 1.25 // $1.25 per million write requests
-	
-	// 	readCapacity := float64(5) // Default or fetched user input 
-	// 	writeCapacity := float64(5) // Default or fetched user input
-	
-	// 	secondsPerMonth := float64(24 * 60 * 60 * 30) // 30 days
-	// 	totalReadRequests := readCapacity * secondsPerMonth
-	// 	totalWriteRequests := writeCapacity * secondsPerMonth
-	
-	// 	readCost := (totalReadRequests / 1_000_000) * readCostPerMillion
-	// 	writeCost := (totalWriteRequests / 1_000_000) * writeCostPerMillion
-	
-	// 	monthlyCost := readCost + writeCost
-	// 	estimatedCost = monthlyCost * 3
-	// 	estimatedCost = math.Round(estimatedCost*100) / 100
-
-	case "Amazon VPC (Virtual Private Cloud)":
-		// VPC Endpoint: Unit is USD/hour
-		hoursPerQuarter := float64(24 * 90) // 24 hours/day * 90 days
-		estimatedCost = pricePerUnit * hoursPerQuarter
-
 	default:
-		return 0, fmt.Errorf("unsupported AWS service: %s", service)
+		// For services like Lambda, CloudFront, DynamoDB, and VPC:
+		return 0, fmt.Errorf("cost calculation is not supported for this service: %s", service)
 	}
 
 	// Round to 2 decimal places for clarity.
@@ -206,11 +216,11 @@ func fetchAWSServicePrice(service string) (float64, error) {
 			{Field: aws.String("storageClass"), Value: aws.String("General Purpose"), Type: types.FilterTypeTermMatch},
 			{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
 		}
-	case "AWS Lambda":
-		filters = []types.Filter{
-			{Field: aws.String("usagetype"), Value: aws.String("Lambda-GB-Second"), Type: types.FilterTypeTermMatch},
-			{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
-		}
+	// case "AWS Lambda":
+	// 	filters = []types.Filter{
+	// 		{Field: aws.String("usagetype"), Value: aws.String("Lambda-GB-Second"), Type: types.FilterTypeTermMatch},
+	// 		{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
+	// 	}
 	case "Amazon RDS (Relational Database Service)":
 		filters = []types.Filter{
 			{Field: aws.String("instanceType"), Value: aws.String("db.t3.micro"), Type: types.FilterTypeTermMatch},
@@ -223,18 +233,18 @@ func fetchAWSServicePrice(service string) (float64, error) {
 	// 		{Field: aws.String("usagetype"), Value: aws.String("DynamoDB-WriteCapacityUnit-Hrs"), Type: types.FilterTypeTermMatch},
 	// 		{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
 	// 	}
-	case "AWS CloudFront":
-		filters = []types.Filter{
-			{Field: aws.String("productFamily"), Value: aws.String("Request"), Type: types.FilterTypeTermMatch},
-			{Field: aws.String("usagetype"), Value: aws.String("USE1-Requests-OriginShield"), Type: types.FilterTypeTermMatch}, // Correct usage type
-			{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
-		}	
-	case "Amazon VPC (Virtual Private Cloud)":
-		filters = []types.Filter{
-			{Field: aws.String("productFamily"), Value: aws.String("VpcEndpoint"), Type: types.FilterTypeTermMatch},
-			{Field: aws.String("endpointType"), Value: aws.String("Gateway Load Balancer Endpoint"), Type: types.FilterTypeTermMatch},
-			{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
-		}	
+	// case "AWS CloudFront":
+	// 	filters = []types.Filter{
+	// 		{Field: aws.String("productFamily"), Value: aws.String("Request"), Type: types.FilterTypeTermMatch},
+	// 		{Field: aws.String("usagetype"), Value: aws.String("USE1-Requests-OriginShield"), Type: types.FilterTypeTermMatch}, // Correct usage type
+	// 		{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
+	// 	}
+	// case "Amazon VPC (Virtual Private Cloud)":
+	// 	filters = []types.Filter{
+	// 		{Field: aws.String("productFamily"), Value: aws.String("VpcEndpoint"), Type: types.FilterTypeTermMatch},
+	// 		{Field: aws.String("endpointType"), Value: aws.String("Gateway Load Balancer Endpoint"), Type: types.FilterTypeTermMatch},
+	// 		{Field: aws.String("location"), Value: aws.String("US East (N. Virginia)"), Type: types.FilterTypeTermMatch},
+	// 	}
 	default:
 		return 0, fmt.Errorf("unsupported AWS service: %s", service)
 	}
@@ -295,8 +305,8 @@ func serviceToCode(service string) string {
 		return "AWSLambda"
 	case "Amazon RDS (Relational Database Service)":
 		return "AmazonRDS"
-	// case "Amazon DynamoDB":
-	// 	return "AmazonDynamoDB"
+	case "Amazon DynamoDB":
+		return "AmazonDynamoDB"
 	case "AWS CloudFront":
 		return "AmazonCloudFront"
 	case "Amazon VPC (Virtual Private Cloud)":
@@ -306,112 +316,202 @@ func serviceToCode(service string) string {
 	}
 }
 
-// FetchAWSServicePriceHandler fetches and displays AWS service pricing for debugging purposes
-func FetchAWSServicePriceHandler(w http.ResponseWriter, r *http.Request) {
+func CalculateGCPCost(service string) (float64, error) {
+	// Fetch the price and unit from the GCP pricing API
+	pricePerUnit, _, err := FetchGCPServicePrice(service)
+	if err != nil {
+		// Return 0 cost and no error for services where cost calculation isn't supported.
+		if strings.Contains(err.Error(), "cost fetching is not supported") {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	var estimatedCost float64
+
+	// Calculate cost based on service-specific units
+	switch service {
+	case "Compute Engine":
+		// Unit: USD/hour
+		hoursPerQuarter := float64(24 * 90) // 24 hours/day * 90 days
+		estimatedCost = pricePerUnit * hoursPerQuarter
+
+	case "Cloud Storage":
+		// Unit: USD/GB/month
+		monthlyCost := pricePerUnit * 1024 // assuming 1TB = 1024GB
+		estimatedCost = monthlyCost * 3    // Quarterly cost (3 months)
+
+	case "Cloud SQL":
+		// Unit: USD/hour
+		hoursPerQuarter := float64(24 * 90) // 24 hours/day * 90 days
+		estimatedCost = pricePerUnit * hoursPerQuarter
+
+	default:
+		// For services like GKE, BigQuery, and Cloud Functions
+		return 0, fmt.Errorf("cost calculation is not supported for this service: %s", service)
+	}
+
+	// Round to 2 decimal places for clarity
+	estimatedCost = math.Round(estimatedCost*100) / 100
+	return estimatedCost, nil
+}
+
+// fetches the dynamic pricing for a GCP service using Billing API.
+func FetchGCPServicePrice(service string) (float64, string, error) {
+	ctx := context.Background()
+
+	// Create a Cloud Catalog client
+	client, err := billing.NewCloudCatalogClient(ctx)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to create Cloud Catalog client: %v", err)
+	}
+	defer client.Close()
+
+	// Map service names to their display names in the Cloud Catalog
+	serviceMap := map[string]string{
+		"Compute Engine":                "Compute Engine",
+		"Cloud Storage":                 "Cloud Storage",
+		"Cloud SQL":                     "Cloud SQL",
+	}
+
+	displayName, exists := serviceMap[service]
+	if !exists {
+		return 0, "", fmt.Errorf("unsupported GCP service: %s", service)
+	}
+
+	// List all services and find the matching one
+	req := &billingpb.ListServicesRequest{}
+	it := client.ListServices(ctx, req)
+	for {
+		svc, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return 0, "", fmt.Errorf("error while iterating services: %v", err)
+		}
+
+		// Match service by display name
+		if svc.DisplayName == displayName {
+			// List SKUs for the matched service
+			skuReq := &billingpb.ListSkusRequest{
+				Parent: svc.Name,
+			}
+			skuIt := client.ListSkus(ctx, skuReq)
+			for {
+				sku, err := skuIt.Next()
+				if err == iterator.Done {
+					break
+				}
+				if err != nil {
+					return 0, "", fmt.Errorf("error while iterating SKUs: %v", err)
+				}
+
+				// Compute Engine
+				if service == "Compute Engine" && sku.Category.ResourceFamily == "Compute" {
+					if sku.PricingInfo != nil && len(sku.PricingInfo) > 0 {
+						pricing := sku.PricingInfo[0].PricingExpression
+						if pricing != nil && len(pricing.TieredRates) > 0 && pricing.UsageUnit == "h" {
+							price := pricing.TieredRates[0].UnitPrice
+							return float64(price.Units) + float64(price.Nanos)/1e9, pricing.UsageUnitDescription, nil
+						}
+					}
+				}
+
+				// Cloud Storage
+				if sku.Category.ResourceFamily == "Storage" && service == "Cloud Storage" {
+					if sku.PricingInfo != nil && len(sku.PricingInfo) > 0 {
+						pricing := sku.PricingInfo[0].PricingExpression
+						if pricing != nil && len(pricing.TieredRates) > 0 && pricing.UsageUnit == "GiBy.mo" {
+							price := pricing.TieredRates[0].UnitPrice
+							return float64(price.Units) + float64(price.Nanos)/1e9, pricing.UsageUnitDescription, nil
+						}
+					}
+				}
+
+				// Cloud SQL
+				if service == "Cloud SQL" && strings.Contains(sku.Description, "MySQL") && strings.Contains(sku.Description, "vCPU") {
+					if sku.PricingInfo != nil && len(sku.PricingInfo) > 0 {
+						pricing := sku.PricingInfo[0].PricingExpression
+						if pricing != nil && len(pricing.TieredRates) > 0 {
+							price := pricing.TieredRates[0].UnitPrice
+							return float64(price.Units) + float64(price.Nanos)/1e9, pricing.UsageUnitDescription, nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return 0, "", fmt.Errorf("pricing data not found for service: %s", service)
+}
+
+
+
+// FetchGCPServicePriceHandler handles requests to fetch the minimum pricing for a GCP service.
+func FetchGCPServicePriceHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Service string `json:"service"`
 	}
 
-	// Decode the request body
+	// Decode the incoming request payload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
 	if req.Service == "" {
-		http.Error(w, "Service is required", http.StatusBadRequest)
+		http.Error(w, "Service name is required", http.StatusBadRequest)
 		return
 	}
 
-	// Fetch the service price
-	price, err := fetchAWSServicePrice(req.Service)
+	// Fetch the minimum price for the specified GCP service
+	price, unit, err := FetchGCPServicePrice(req.Service)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to fetch AWS pricing data: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to fetch GCP pricing data: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Respond with the price and debug information
-	response := map[string]interface{}{
+	// Return the fetched price and unit in the response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"service": req.Service,
 		"price":   price,
-		"units":   "USD/hour for EC2; USD/GB/month for S3; USD/GB-second for Lambda", // Unit clarification
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+		"unit":    unit,
+		"currency": "USD", // Assuming the pricing is in USD
+	})
 }
 
-// CalculateGCPCost dynamically calculates the estimated cost for a GCP service using the Cloud Billing API
-func CalculateGCPCost(service string) (float64, error) {
-	// Default region
-	region := "us-east1"
+// // FetchAWSServicePriceHandler fetches and displays AWS service pricing for debugging purposes
+// func FetchAWSServicePriceHandler(w http.ResponseWriter, r *http.Request) {
+// 	var req struct {
+// 		Service string `json:"service"`
+// 	}
 
-	// Fetch the hourly price for the service
-	pricePerHour, err := fetchGCPServicePrice(service, region)
-	if err != nil {
-		return 0, err
-	}
+// 	// Decode the request body
+// 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+// 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+// 		return
+// 	}
 
-	// Calculate cost for 90 days (quarter)
-	hoursPerQuarter := float64(24 * 90)
-	estimatedCost := hoursPerQuarter * pricePerHour
+// 	if req.Service == "" {
+// 		http.Error(w, "Service is required", http.StatusBadRequest)
+// 		return
+// 	}
 
-	// Round to 2 decimal places
-	estimatedCost = math.Round(estimatedCost*100) / 100
-	return estimatedCost, nil
-}
+// 	// Fetch the service price
+// 	price, err := fetchAWSServicePrice(req.Service)
+// 	if err != nil {
+// 		http.Error(w, fmt.Sprintf("Failed to fetch AWS pricing data: %v", err), http.StatusInternalServerError)
+// 		return
+// 	}
 
-// fetchGCPServicePrice dynamically fetches the hourly price of a GCP service for a specific region
-func fetchGCPServicePrice(service, region string) (float64, error) {
-	ctx := context.Background()
-	client, err := cloudbilling.NewService(ctx, option.WithCredentialsFile("path/to/credentials.json"))
-	if err != nil {
-		return 0, fmt.Errorf("failed to create GCP billing client: %v", err)
-	}
-
-	// Get the list of services from the Cloud Billing API
-	services, err := client.Services.List().Do()
-	if err != nil {
-		return 0, fmt.Errorf("failed to fetch GCP services: %v", err)
-	}
-
-	// Find the matching service
-	var serviceName string
-	for _, serviceData := range services.Services {
-		if serviceData.DisplayName == service {
-			serviceName = serviceData.Name
-			break
-		}
-	}
-
-	if serviceName == "" {
-		return 0, fmt.Errorf("service '%s' not found", service)
-	}
-
-	// Fetch the pricing details for the service
-	skus, err := client.Services.Skus.List(serviceName).Do()
-	if err != nil {
-		return 0, fmt.Errorf("failed to fetch pricing SKUs: %v", err)
-	}
-
-	// Parse the SKUs to find the price for the given region
-	for _, sku := range skus.Skus {
-		for _, pricingInfo := range sku.PricingInfo {
-			if contains(sku.ServiceRegions, region) || contains(sku.ServiceRegions, "global") {
-				unitPrice := pricingInfo.PricingExpression.TieredRates[0].UnitPrice
-				price := float64(unitPrice.Nanos) / 1e9
-				return price, nil
-			}
-		}
-	}
-	return 0, fmt.Errorf("price data not found for service '%s' in region '%s'", service, region)
-}
-
-// contains checks if a slice contains a specific string
-func contains(slice []string, value string) bool {
-	for _, v := range slice {
-		if v == value {
-			return true
-		}
-	}
-	return false
-}
+// 	// Respond with the price and debug information
+// 	response := map[string]interface{}{
+// 		"service": req.Service,
+// 		"price":   price,
+// 		"units":   "USD/hour for EC2; USD/GB/month for S3; USD/GB-second for Lambda", // Unit clarification
+// 	}
+// 	w.Header().Set("Content-Type", "application/json")
+// 	json.NewEncoder(w).Encode(response)
+// }

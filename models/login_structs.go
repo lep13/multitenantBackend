@@ -1,5 +1,5 @@
 package models
-
+ 
 // User represents a user document in MongoDB
 type User struct {
     Username string `bson:"username"`
@@ -7,16 +7,17 @@ type User struct {
     Email    string `bson:"email"`
     Tag      string `bson:"tag"`
 }
-
+ 
 // LoginRequest represents the structure of the login request
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+    Username string `json:"username"`
+    Password string `json:"password"`
 }
-
+ 
 // LoginResponse represents the structure of the login response
 type LoginResponse struct {
-	Success     bool   `json:"success"`
-	Message     string `json:"message"`
-	RedirectURL string `json:"redirectURL,omitempty"`
+    Success     bool   `json:"success"`
+    Message     string `json:"message"`
+    Token       string `json:"token,omitempty"`        // JWT token for authentication
+    RedirectURL string `json:"redirectURL,omitempty"`
 }
