@@ -54,6 +54,19 @@ func CreateComputeEngineHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configuration details
+	config := bson.M{
+		"name":            req.Name,
+		"zone":            req.Zone,
+		"machine_type":    req.MachineType,
+		"image_project":   req.ImageProject,
+		"image_family":    req.ImageFamily,
+		"network":         req.Network,
+		"subnetwork":      req.Subnetwork,
+		"service_account": req.ServiceAccount,
+		"region":          req.Region,
+	}
+
 	// Proceed with service creation
 	gcpRequest := models.GCPInstanceRequest{
 		Name:           req.Name,
@@ -74,28 +87,15 @@ func CreateComputeEngineHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Finalize the session with the reusable function
-	token := r.Header.Get("Authorization") // Extract user's JWT token from the request header
-	if token == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
-
-	err = db.FinalizeSessionWithJWT(req.SessionID, token)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to finalize session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Respond with success message
+		// Respond with the creation result (service creation successful)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":       "Compute Engine instance created successfully",
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":      "Compute Engine instance created successfully",
+		"config":       config,
 		"instance_name": req.Name,
-		"zone":          req.Zone,
-		"region":        req.Region,
-		"project_id":    projectID,
+		"region":       req.Region,
 	})
+
 }
 
 // CreateCloudStorageHandler handles requests to create a GCP Cloud Storage bucket
@@ -126,6 +126,12 @@ func CreateCloudStorageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configuration details
+	config := bson.M{
+		"bucket_name": req.BucketName,
+		"region":      req.Region,
+	}
+
 	// Proceed with bucket creation
 	_, err = cloud.CreateCloudStorage(req.BucketName, req.Region)
 	if err != nil {
@@ -133,26 +139,15 @@ func CreateCloudStorageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Finalize the session
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
+	// Respond with the creation result (service creation successful)
+w.Header().Set("Content-Type", "application/json")
+json.NewEncoder(w).Encode(map[string]interface{}{
+	"message":     "Cloud Storage bucket created successfully",
+	"config":      config,
+	"bucket_name": req.BucketName,
+	"region":      req.Region,
+})
 
-	err = db.FinalizeSessionWithJWT(req.SessionID, token)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to finalize session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Respond with a success message
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":     "Cloud Storage bucket created successfully",
-		"bucket_name": req.BucketName,
-		"region":      req.Region,
-	})
 }
 
 // CreateGKEClusterHandler handles requests to create a GKE cluster
@@ -188,6 +183,17 @@ func CreateGKEClusterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configuration details
+	config := bson.M{
+		"cluster_name": req.ClusterName,
+		"zone":         req.Zone,
+		"region":       req.Region,
+		"machine_type": req.MachineType,
+		"network":      req.Network,
+		"subnetwork":   req.Subnetwork,
+		"node_count":   req.NodeCount,
+	}
+
 	// Call the cloud function to create the GKE cluster
 	operation, err := cloud.CreateGKECluster(req.ClusterName, req.Zone, req.Region, req.MachineType, req.Network, req.Subnetwork, req.NodeCount)
 	if err != nil {
@@ -195,28 +201,16 @@ func CreateGKEClusterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Finalize the session
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
+// Respond with the creation result (service creation successful)
+w.Header().Set("Content-Type", "application/json")
+json.NewEncoder(w).Encode(map[string]interface{}{
+	"message":      "GKE cluster created successfully",
+	"operation": operation,
+	"config":       config,
+	"cluster_name": req.ClusterName,
+	"region":       req.Region,
+})
 
-	err = db.FinalizeSessionWithJWT(req.SessionID, token)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to finalize session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Respond with success message
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":      "GKE cluster creation initiated successfully",
-		"cluster_name": req.ClusterName,
-		"region":       req.Region,
-		"zone":         req.Zone,
-		"status":       operation.Status.String(), // Convert Status to a string
-	})
 }
 
 // CreateBigQueryDatasetHandler handles requests to create a BigQuery dataset
@@ -247,6 +241,12 @@ func CreateBigQueryDatasetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configuration details
+	config := bson.M{
+		"dataset_id": req.DatasetID,
+		"region":     req.Region,
+	}
+
 	// Call the cloud function to create the BigQuery dataset
 	dataset, err := cloud.CreateBigQueryDataset(req.DatasetID, req.Region)
 	if err != nil {
@@ -254,27 +254,16 @@ func CreateBigQueryDatasetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Finalize the session
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
+// Respond with the creation result (service creation successful)
+w.Header().Set("Content-Type", "application/json")
+json.NewEncoder(w).Encode(map[string]interface{}{
+	"message":    "BigQuery dataset created successfully",
+	"dataset": dataset,
+	"config":     config,
+	"dataset_id": req.DatasetID,
+	"region":     req.Region,
+})
 
-	err = db.FinalizeSessionWithJWT(req.SessionID, token)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to finalize session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Respond with success message
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":    "BigQuery dataset created successfully",
-		"dataset_id": req.DatasetID,
-		"region":     req.Region,
-		"project_id": dataset.ProjectID,
-	})
 }
 
 // // DeployCloudFunctionHandler handles requests to deploy a Google Cloud Function
@@ -341,6 +330,14 @@ func CreateCloudSQLHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configuration details
+	config := bson.M{
+		"instance_name":    req.InstanceName,
+		"region":           req.Region,
+		"tier":             req.Tier,
+		"database_version": req.DatabaseVersion,
+	}
+
 	// Fetch Project ID dynamically
 	projectID, err := cloud.FetchProjectID()
 	if err != nil {
@@ -355,29 +352,15 @@ func CreateCloudSQLHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Finalize the session
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
+// Respond with the creation result (service creation successful)
+w.Header().Set("Content-Type", "application/json")
+json.NewEncoder(w).Encode(map[string]interface{}{
+	"message":          "Cloud SQL instance created successfully",
+	"result":           result,
+	"config":           config,
+	"instance_name":    req.InstanceName,
+	"region":           req.Region,
+	"database_version": req.DatabaseVersion,
+})
 
-	err = db.FinalizeSessionWithJWT(req.SessionID, token)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to finalize session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Use the result details in the response
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":          "Cloud SQL instance created successfully",
-		"instance_name":    req.InstanceName,
-		"region":           req.Region,
-		"tier":             req.Tier,
-		"database_version": req.DatabaseVersion,
-		"project_id":       projectID,
-		"operation_name":   result.Name, // operation name for tracking
-		"status":           result.Status,
-	})
 }

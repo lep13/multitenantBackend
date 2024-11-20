@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"multitenant/db"
 	"net/http"
 	"time"
@@ -103,71 +104,69 @@ func UpdateSessionHandler(w http.ResponseWriter, r *http.Request) {
 
 // finalizes the session and moves it to the services collection or deletes it if denied
 func CompleteSessionHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("Starting CompleteSessionHandler")
+
 	var req struct {
 		SessionID string `json:"session_id"`
 		Status    string `json:"status"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Failed to decode request: %v\n", err)
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
+	log.Printf("Decoded request: %+v\n", req)
 
-	// Fetch session details
 	var session bson.M
 	err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
 	if err != nil {
+		log.Printf("Session not found: %v\n", err)
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
+	log.Printf("Fetched session: %+v\n", session)
 
-	// Extract relevant fields
-	estimatedCost := session["estimated_cost"].(float64)
-	groupBudget := session["group_budget"].(float64)
-	username := session["username"].(string)
-
-	// Check if the session status is "denied"
-	if session["status"] == "denied" || estimatedCost > groupBudget {
-		// Delete the session from user_sessions collection
-		_, err := db.GetUserSessionCollection().DeleteOne(context.Background(), bson.M{"session_id": req.SessionID})
-		if err != nil {
-			http.Error(w, "Failed to delete denied session", http.StatusInternalServerError)
-			return
-		}
-
-		// Prepare and send the error response
-		response := map[string]interface{}{
-			"error":           "Insufficient budget",
-			"message":         fmt.Sprintf("User '%s', you don't have enough budget to create this service. Estimated cost: %.2f, Group budget: %.2f. Please request your manager for additional budget.", username, estimatedCost, groupBudget),
-			"estimated_cost":  estimatedCost,
-			"group_budget":    groupBudget,
-			"session_deleted": true,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(response)
+	// Check config validity
+	config, ok := session["config"].(bson.M)
+	if !ok {
+		log.Println("Invalid or missing config in session")
+		http.Error(w, "Invalid or missing config in session", http.StatusInternalServerError)
 		return
 	}
 
-	// Finalize the session if status is not "denied"
+	// Update session details
 	session["status"] = req.Status
 	session["timestamp"] = time.Now()
 	session["service_status"] = "running"
 
-	// Insert session into the services collection
-	_, err = db.GetServicesCollection().InsertOne(context.Background(), session)
-	if err != nil {
-		http.Error(w, "Failed to move session to services collection", http.StatusInternalServerError)
+	// Check if session already exists in services collection
+	existing := db.GetServicesCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID})
+	if existing.Err() == nil {
+		log.Println("Session already exists in services collection")
+		http.Error(w, "Session already exists in services collection", http.StatusConflict)
 		return
 	}
 
-	// Delete session from user_sessions collection
+	// Add session to `services` collection
+	err = db.PushToServicesCollection(session, config)
+	if err != nil {
+		log.Printf("Failed to move session to services collection: %v\n", err)
+		http.Error(w, fmt.Sprintf("Failed to move session to services collection: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Println("Session added to services collection")
+
+	// Delete session from `user_sessions` collection
 	_, err = db.GetUserSessionCollection().DeleteOne(context.Background(), bson.M{"session_id": req.SessionID})
 	if err != nil {
+		log.Printf("Failed to delete session: %v\n", err)
 		http.Error(w, "Failed to delete session", http.StatusInternalServerError)
 		return
 	}
+	log.Println("Session deleted from user_sessions collection")
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Session finalized successfully"))
+	log.Println("CompleteSessionHandler finished successfully")
 }

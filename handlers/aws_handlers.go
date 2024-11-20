@@ -43,6 +43,16 @@ func CreateEC2InstanceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configuration details
+	config := bson.M{
+		"instance_type":    req.InstanceType,
+		"ami_id":           req.AmiID,
+		"key_name":         req.KeyName,
+		"subnet_id":        req.SubnetID,
+		"security_group_id": req.SecurityGroupID,
+		"instance_name":    req.InstanceName,
+	}
+
 	// Proceed with service creation
 	result, err := cloud.CreateEC2Instance(req.InstanceType, req.AmiID, req.KeyName, req.SubnetID, req.SecurityGroupID, req.InstanceName)
 	if err != nil {
@@ -50,21 +60,13 @@ func CreateEC2InstanceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Finalize the session
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
-
-	err = db.FinalizeSessionWithJWT(req.SessionID, token)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to finalize session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
+	// Respond with the creation result (service creation successful)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "EC2 instance created successfully",
+		"result":  result,
+		"config":  config,
+	})
 }
 
 // CreateS3BucketHandler handles requests to create an S3 bucket
@@ -96,6 +98,13 @@ func CreateS3BucketHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configuration details
+	config := bson.M{
+		"bucket_name":    req.BucketName,
+		"versioning":     req.Versioning,
+		"region":         req.Region,
+	}
+
 	// Proceed with service creation
 	result, err := cloud.CreateS3Bucket(req.BucketName, req.Versioning, req.Region)
 	if err != nil {
@@ -103,21 +112,13 @@ func CreateS3BucketHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Finalize the session
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
-
-	err = db.FinalizeSessionWithJWT(req.SessionID, token)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to finalize session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
+	// Respond with the creation result (service creation successful)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "S3 bucket created successfully",
+		"result":  result,
+		"config":  config,
+	})
 }
 
 // CreateLambdaFunctionHandler handles requests to create a Lambda function
@@ -151,6 +152,15 @@ func CreateLambdaFunctionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configuration details
+	config := bson.M{
+		"function_name": req.FunctionName,
+		"handler":       req.Handler,
+		"runtime":       req.Runtime,
+		"zip_file_path": req.ZipFilePath,
+		"region":        req.Region,
+	}
+
 	// Proceed with service creation
 	result, err := cloud.CreateLambdaFunction(req.FunctionName, req.Handler, req.Runtime, req.ZipFilePath, req.Region)
 	if err != nil {
@@ -158,21 +168,16 @@ func CreateLambdaFunctionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Finalize the session
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
-
-	err = db.FinalizeSessionWithJWT(req.SessionID, token)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to finalize session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
+	// Respond with the creation result (service creation successful)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":      "Lambda function created successfully",
+		"result":       result,
+		"config":       config,
+		"function_name": req.FunctionName,
+		"region":       req.Region,
+	})
+
 }
 
 // Handler for creating RDS instance
@@ -209,6 +214,18 @@ func CreateRDSInstanceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configuration details
+	config := bson.M{
+		"db_name":            req.DBName,
+		"instance_id":        req.InstanceID,
+		"instance_class":     req.InstanceClass,
+		"engine":             req.Engine,
+		"username":           req.Username,
+		"password":           req.Password,
+		"allocated_storage":  req.AllocatedStorage,
+		"subnet_group_name":  req.SubnetGroupName,
+	}
+
 	// Proceed with RDS instance creation
 	result, err := cloud.CreateRDSInstance(req.DBName, req.InstanceID, req.InstanceClass, req.Engine, req.Username, req.Password, req.AllocatedStorage, req.SubnetGroupName)
 	if err != nil {
@@ -216,21 +233,15 @@ func CreateRDSInstanceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Finalize the session
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
-
-	err = db.FinalizeSessionWithJWT(req.SessionID, token)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to finalize session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
+	// Respond with the creation result (service creation successful)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":        "RDS instance created successfully",
+		"result":         result,
+		"config":         config,
+		"db_instance_id": req.InstanceID,
+	})
+
 }
 
 // // Handler for creating DynamoDB table
@@ -322,6 +333,15 @@ func CreateCloudFrontDistributionHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Configuration details
+	config := bson.M{
+		"origin_domain_name": req.OriginDomainName,
+		"comment":            req.Comment,
+		"region":             req.Region,
+		"min_ttl":            req.MinTTL,
+		"bucket_name":        req.BucketName,
+	}
+
 	// Create CloudFront distribution
 	distributionResult, oaiCanonicalUserID, err := cloud.CreateCloudFrontDistribution(req.OriginDomainName, req.Comment, req.Region, req.MinTTL)
 	if err != nil {
@@ -336,22 +356,16 @@ func CreateCloudFrontDistributionHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Finalize the session
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
-
-	err = db.FinalizeSessionWithJWT(req.SessionID, token)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to finalize session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Respond with the creation result
+	// Respond with the creation result (service creation successful)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(distributionResult)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":           "CloudFront distribution created successfully",
+		"result":            distributionResult,
+		"config":            config,
+		"origin_domain_name": req.OriginDomainName,
+		"region":            req.Region,
+	})
+
 }
 
 // Handler for creating VPC with session management
@@ -388,6 +402,13 @@ func CreateVPCHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configuration details
+	config := bson.M{
+		"cidr_block": req.CidrBlock,
+		"region":     req.Region,
+		"name":       req.Name,
+	}
+
 	// Proceed with VPC creation
 	result, err := cloud.CreateVPC(req.CidrBlock, req.Region, req.Name)
 	if err != nil {
@@ -395,19 +416,14 @@ func CreateVPCHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Finalize the session
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
-
-	err = db.FinalizeSessionWithJWT(req.SessionID, token)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to finalize session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
+	// Respond with the creation result (service creation successful)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":   "VPC created successfully",
+		"result":    result,
+		"config":    config,
+		"cidr_block": req.CidrBlock,
+		"region":    req.Region,
+	})
+
 }

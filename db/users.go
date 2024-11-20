@@ -193,8 +193,22 @@ func MarkSessionCompleted(sessionID string, serviceStatus string) error {
 	return err
 }
 
-// PushToServicesCollection moves completed session data to the services collection
-func PushToServicesCollection(session bson.M) error {
-	_, err := GetServicesCollection().InsertOne(context.Background(), session)
-	return err
+// saves service data in the `services` collection
+func PushToServicesCollection(session bson.M, config bson.M) error {
+    // Add configuration details and timestamp
+    session["config"] = config
+    session["timestamp"] = time.Now()
+
+    // Remove `_id` to avoid duplicate key errors
+    delete(session, "_id")
+
+    // Use `Upsert` to ensure no duplicate documents
+    filter := bson.M{"session_id": session["session_id"]}
+    update := bson.M{"$set": session}
+
+    _, err := GetServicesCollection().UpdateOne(context.Background(), filter, update, options.Update().SetUpsert(true))
+    if err != nil {
+        return fmt.Errorf("failed to upsert into services collection: %w", err)
+    }
+    return nil
 }
