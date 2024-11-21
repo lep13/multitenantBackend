@@ -134,6 +134,8 @@ func CompleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid or missing config in session", http.StatusInternalServerError)
 		return
 	}
+	
+	log.Printf("Fetched config: %+v\n", config)
 
 	// Update session details
 	session["status"] = req.Status
