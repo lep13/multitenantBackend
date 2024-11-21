@@ -212,3 +212,117 @@ func PushToServicesCollection(session bson.M, config bson.M) error {
     }
     return nil
 }
+
+// updates the service_status if service is deleted
+func UpdateServiceStatus(username, serviceType, identifier, status string) error {
+    var filter bson.M
+
+    // Build the filter dynamically based on the service type
+    switch serviceType {
+    case "Amazon S3 (Simple Storage Service)":
+        filter = bson.M{
+            "username":           username,
+            "service":            serviceType,
+            "config.bucket_name": identifier, // Use bucket_name for S3
+        }
+    case "Amazon EC2 (Elastic Compute Cloud)":
+        filter = bson.M{
+            "username":              username,
+            "service":               serviceType,
+            "config.instance_name":  identifier, // Use instance_name for EC2
+        }
+    case "AWS Lambda":
+        filter = bson.M{
+            "username":              username,
+            "service":               serviceType,
+            "config.function_name":  identifier, // Use function_name for Lambda
+        }
+    case "Amazon RDS (Relational Database Service)":
+        filter = bson.M{
+            "username":              username,
+            "service":               serviceType,
+            "config.instance_id":    identifier, // Use instance_id for RDS
+        }
+    case "AWS CloudFront":
+        filter = bson.M{
+            "username":              username,
+            "service":               serviceType,
+            "config.distribution_id": identifier, // Use distribution_id for CloudFront
+        }
+    case "Amazon VPC (Virtual Private Cloud)":
+        filter = bson.M{
+            "username":              username,
+            "service":               serviceType,
+            "config.vpc_id":         identifier, // Use vpc_id for VPC
+        }
+    default:
+        return fmt.Errorf("unsupported service type: '%s'", serviceType)
+    }
+
+    // Update query
+    update := bson.M{
+        "$set": bson.M{
+            "service_status": status,
+            "end_timestamp":  time.Now(), // Add the end timestamp
+        },
+    }
+
+    // Execute the update operation
+    result, err := GetServicesCollection().UpdateOne(context.Background(), filter, update)
+    if err != nil {
+        return fmt.Errorf("failed to update service status: %w", err)
+    }
+
+    // If no matching documents were found, return an error
+    if result.MatchedCount == 0 {
+        return fmt.Errorf("no matching service found for user '%s' with service type '%s' and identifier '%s'", username, serviceType, identifier)
+    }
+
+    return nil
+}
+
+// based on the username and instance name.
+func GetInstanceIDByInstanceName(username, serviceType, instanceName string) (string, error) {
+    var serviceData bson.M
+
+    // Determine the appropriate field for instance name based on the service type
+    var instanceNameField string
+    if serviceType == "Amazon EC2 (Elastic Compute Cloud)" {
+        instanceNameField = "config.instance_name"
+    } else if serviceType == "Amazon RDS (Relational Database Service)" {
+        instanceNameField = "config.db_name"
+    } else {
+        return "", fmt.Errorf("unsupported service type for instance ID retrieval: %s", serviceType)
+    }
+
+    // Query the MongoDB collection
+    err := GetServicesCollection().FindOne(context.Background(), bson.M{
+        "username": username,
+        "service":  serviceType,
+        instanceNameField: instanceName,
+    }).Decode(&serviceData)
+
+    if err != nil {
+        if err == mongo.ErrNoDocuments {
+            return "", fmt.Errorf("no matching document found for username '%s' and instance name '%s'", username, instanceName)
+        }
+        return "", fmt.Errorf("failed to fetch service details from database: %w", err)
+    }
+
+    // Log the fetched data for debugging
+    fmt.Printf("Fetched service document: %+v\n", serviceData)
+
+    // Extract the config field
+    config, ok := serviceData["config"].(bson.M)
+    if !ok {
+        return "", fmt.Errorf("invalid config format in service document")
+    }
+
+    // Extract the instance_id
+    instanceID, ok := config["instance_id"].(string)
+    if !ok || instanceID == "" {
+        return "", fmt.Errorf("instance ID not found for instance name '%s'", instanceName)
+    }
+
+    return instanceID, nil
+}

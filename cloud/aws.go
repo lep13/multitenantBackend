@@ -37,40 +37,51 @@ func InitAWS() error {
 
 // EC2 Instance Creation
 func CreateEC2Instance(instanceType, amiID, keyName, subnetID, securityGroupID, instanceName string) (*ec2.RunInstancesOutput, error) {
-	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion("us-east-1"))
-	if err != nil {
-		return nil, fmt.Errorf("unable to load config: %v", err)
-	}
-	ec2Client := ec2.NewFromConfig(cfg)
+    cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion("us-east-1"))
+    if err != nil {
+        return nil, fmt.Errorf("unable to load config: %v", err)
+    }
 
-	input := &ec2.RunInstancesInput{
-		ImageId:      aws.String(amiID),
-		InstanceType: ec2types.InstanceType(instanceType),
-		KeyName:      aws.String(keyName),
-		SubnetId:     aws.String(subnetID),
-		SecurityGroupIds: []string{
-			securityGroupID, // Only Security Group IDs should be provided
-		},
-		MinCount: aws.Int32(1),
-		MaxCount: aws.Int32(1),
-		TagSpecifications: []ec2types.TagSpecification{
-			{
-				ResourceType: ec2types.ResourceTypeInstance,
-				Tags: []ec2types.Tag{
-					{
-						Key:   aws.String("Name"),
-						Value: aws.String(instanceName),
-					},
-				},
-			},
-		},
-	}
+    ec2Client := ec2.NewFromConfig(cfg)
 
-	result, err := ec2Client.RunInstances(context.Background(), input)
-	if err != nil {
-		return nil, fmt.Errorf("could not create EC2 instance: %v", err)
-	}
-	return result, nil
+    input := &ec2.RunInstancesInput{
+        ImageId:      aws.String(amiID),
+        InstanceType: ec2types.InstanceType(instanceType),
+        KeyName:      aws.String(keyName),
+        SubnetId:     aws.String(subnetID),
+        SecurityGroupIds: []string{
+            securityGroupID,
+        },
+        MinCount: aws.Int32(1),
+        MaxCount: aws.Int32(1),
+        TagSpecifications: []ec2types.TagSpecification{
+            {
+                ResourceType: ec2types.ResourceTypeInstance,
+                Tags: []ec2types.Tag{
+                    {
+                        Key:   aws.String("Name"),
+                        Value: aws.String(instanceName),
+                    },
+                },
+            },
+        },
+    }
+
+    // Run the instance
+    result, err := ec2Client.RunInstances(context.Background(), input)
+    if err != nil {
+        return nil, fmt.Errorf("could not create EC2 instance: %v", err)
+    }
+
+    // Extract the instance ID
+    if len(result.Instances) == 0 {
+        return nil, fmt.Errorf("no instances were created")
+    }
+    instanceID := *result.Instances[0].InstanceId
+
+    fmt.Printf("EC2 Instance created successfully with ID: %s\n", instanceID)
+
+    return result, nil
 }
 
 // S3 Bucket Creation
@@ -202,68 +213,68 @@ func CreateRDSInstance(dbName, instanceID, instanceClass, engine, username, pass
 
 // CloudFront Distribution Creation with S3 Integration with OAI
 func CreateCloudFrontDistribution(originDomainName, comment, region string, minTTL int64) (*cloudfront.CreateDistributionOutput, string, error) {
-	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
-	if err != nil {
-		return nil, "", fmt.Errorf("unable to load config: %v", err)
-	}
-	cloudFrontClient := cloudfront.NewFromConfig(cfg)
+    cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
+    if err != nil {
+        return nil, "", fmt.Errorf("unable to load config: %v", err)
+    }
+    cloudFrontClient := cloudfront.NewFromConfig(cfg)
 
-	// Create an Origin Access Identity (OAI)
-	oaiResult, err := cloudFrontClient.CreateCloudFrontOriginAccessIdentity(context.TODO(), &cloudfront.CreateCloudFrontOriginAccessIdentityInput{
-		CloudFrontOriginAccessIdentityConfig: &cloudfronttypes.CloudFrontOriginAccessIdentityConfig{
-			CallerReference: aws.String(fmt.Sprintf("caller-ref-%d", time.Now().UnixNano())),
-			Comment:         aws.String(comment),
-		},
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("could not create Origin Access Identity: %v", err)
-	}
+    // Create an Origin Access Identity (OAI)
+    oaiResult, err := cloudFrontClient.CreateCloudFrontOriginAccessIdentity(context.TODO(), &cloudfront.CreateCloudFrontOriginAccessIdentityInput{
+        CloudFrontOriginAccessIdentityConfig: &cloudfronttypes.CloudFrontOriginAccessIdentityConfig{
+            CallerReference: aws.String(fmt.Sprintf("caller-ref-%d", time.Now().UnixNano())),
+            Comment:         aws.String(comment),
+        },
+    })
+    if err != nil {
+        return nil, "", fmt.Errorf("could not create Origin Access Identity: %v", err)
+    }
 
-	// Retrieve the OAI Canonical User ID
-	canonicalUserID := *oaiResult.CloudFrontOriginAccessIdentity.S3CanonicalUserId
+    // Retrieve the OAI Canonical User ID
+    canonicalUserID := *oaiResult.CloudFrontOriginAccessIdentity.S3CanonicalUserId
 
-	// Create the CloudFront distribution
-	input := &cloudfront.CreateDistributionInput{
-		DistributionConfig: &cloudfronttypes.DistributionConfig{
-			CallerReference: aws.String(fmt.Sprintf("caller-ref-%d", time.Now().UnixNano())),
-			Enabled:         aws.Bool(true),
-			Comment:         aws.String(comment),
-			Origins: &cloudfronttypes.Origins{
-				Quantity: aws.Int32(1),
-				Items: []cloudfronttypes.Origin{
-					{
-						Id:         aws.String("Origin1"),
-						DomainName: aws.String(originDomainName),
-						S3OriginConfig: &cloudfronttypes.S3OriginConfig{
-							OriginAccessIdentity: aws.String(fmt.Sprintf("origin-access-identity/cloudfront/%s", *oaiResult.CloudFrontOriginAccessIdentity.Id)),
-						},
-					},
-				},
-			},
-			DefaultCacheBehavior: &cloudfronttypes.DefaultCacheBehavior{
-				TargetOriginId:       aws.String("Origin1"),
-				ViewerProtocolPolicy: cloudfronttypes.ViewerProtocolPolicyRedirectToHttps,
-				AllowedMethods: &cloudfronttypes.AllowedMethods{
-					Quantity: aws.Int32(2),
-					Items:    []cloudfronttypes.Method{cloudfronttypes.MethodGet, cloudfronttypes.MethodHead},
-				},
-				ForwardedValues: &cloudfronttypes.ForwardedValues{
-					QueryString: aws.Bool(false),
-					Cookies: &cloudfronttypes.CookiePreference{
-						Forward: cloudfronttypes.ItemSelectionNone,
-					},
-				},
-				MinTTL: aws.Int64(minTTL),
-			},
-		},
-	}
+    // Create the CloudFront distribution
+    input := &cloudfront.CreateDistributionInput{
+        DistributionConfig: &cloudfronttypes.DistributionConfig{
+            CallerReference: aws.String(fmt.Sprintf("caller-ref-%d", time.Now().UnixNano())),
+            Enabled:         aws.Bool(true),
+            Comment:         aws.String(comment),
+            Origins: &cloudfronttypes.Origins{
+                Quantity: aws.Int32(1),
+                Items: []cloudfronttypes.Origin{
+                    {
+                        Id:         aws.String("Origin1"),
+                        DomainName: aws.String(originDomainName),
+                        S3OriginConfig: &cloudfronttypes.S3OriginConfig{
+                            OriginAccessIdentity: aws.String(fmt.Sprintf("origin-access-identity/cloudfront/%s", *oaiResult.CloudFrontOriginAccessIdentity.Id)),
+                        },
+                    },
+                },
+            },
+            DefaultCacheBehavior: &cloudfronttypes.DefaultCacheBehavior{
+                TargetOriginId:       aws.String("Origin1"),
+                ViewerProtocolPolicy: cloudfronttypes.ViewerProtocolPolicyRedirectToHttps,
+                AllowedMethods: &cloudfronttypes.AllowedMethods{
+                    Quantity: aws.Int32(2),
+                    Items:    []cloudfronttypes.Method{cloudfronttypes.MethodGet, cloudfronttypes.MethodHead},
+                },
+                ForwardedValues: &cloudfronttypes.ForwardedValues{
+                    QueryString: aws.Bool(false),
+                    Cookies: &cloudfronttypes.CookiePreference{
+                        Forward: cloudfronttypes.ItemSelectionNone,
+                    },
+                },
+                MinTTL: aws.Int64(minTTL),
+            },
+        },
+    }
 
-	result, err := cloudFrontClient.CreateDistribution(context.TODO(), input)
-	if err != nil {
-		return nil, "", fmt.Errorf("could not create CloudFront distribution: %v", err)
-	}
+    result, err := cloudFrontClient.CreateDistribution(context.TODO(), input)
+    if err != nil {
+        return nil, "", fmt.Errorf("could not create CloudFront distribution: %v", err)
+    }
 
-	return result, canonicalUserID, nil
+    return result, canonicalUserID, nil
 }
 
 // CreateS3BucketWithPolicy creates an S3 bucket and attaches a policy to allow CloudFront access using OAI
