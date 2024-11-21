@@ -87,7 +87,17 @@ func CreateComputeEngineHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-		// Respond with the creation result (service creation successful)
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
+
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
+		return
+	}
+
+	// Respond with the creation result (service creation successful)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message":      "Compute Engine instance created successfully",
@@ -136,6 +146,16 @@ func CreateCloudStorageHandler(w http.ResponseWriter, r *http.Request) {
 	_, err = cloud.CreateCloudStorage(req.BucketName, req.Region)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create Cloud Storage bucket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
+
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
 		return
 	}
 
@@ -201,15 +221,25 @@ func CreateGKEClusterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-// Respond with the creation result (service creation successful)
-w.Header().Set("Content-Type", "application/json")
-json.NewEncoder(w).Encode(map[string]interface{}{
-	"message":      "GKE cluster created successfully",
-	"operation": operation,
-	"config":       config,
-	"cluster_name": req.ClusterName,
-	"region":       req.Region,
-})
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
+
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
+		return
+	}
+
+	// Respond with the creation result (service creation successful)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":      "GKE cluster created successfully",
+		"operation": operation,
+		"config":       config,
+		"cluster_name": req.ClusterName,
+		"region":       req.Region,
+	})
 
 }
 
@@ -251,6 +281,16 @@ func CreateBigQueryDatasetHandler(w http.ResponseWriter, r *http.Request) {
 	dataset, err := cloud.CreateBigQueryDataset(req.DatasetID, req.Region)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create BigQuery dataset: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
+
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
 		return
 	}
 
@@ -349,6 +389,16 @@ func CreateCloudSQLHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := cloud.CreateCloudSQLInstance(req.InstanceName, projectID, req.Region, req.Tier, req.DatabaseVersion)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create Cloud SQL instance: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
+
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
 		return
 	}
 

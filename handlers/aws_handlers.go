@@ -52,11 +52,22 @@ func CreateEC2InstanceHandler(w http.ResponseWriter, r *http.Request) {
 		"security_group_id": req.SecurityGroupID,
 		"instance_name":    req.InstanceName,
 	}
+	
 
 	// Proceed with service creation
 	result, err := cloud.CreateEC2Instance(req.InstanceType, req.AmiID, req.KeyName, req.SubnetID, req.SecurityGroupID, req.InstanceName)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create EC2 instance: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
+
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
 		return
 	}
 
@@ -109,6 +120,16 @@ func CreateS3BucketHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := cloud.CreateS3Bucket(req.BucketName, req.Versioning, req.Region)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create S3 bucket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
+
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
 		return
 	}
 
@@ -165,6 +186,16 @@ func CreateLambdaFunctionHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := cloud.CreateLambdaFunction(req.FunctionName, req.Handler, req.Runtime, req.ZipFilePath, req.Region)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create Lambda function: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
+
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
 		return
 	}
 
@@ -230,6 +261,16 @@ func CreateRDSInstanceHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := cloud.CreateRDSInstance(req.DBName, req.InstanceID, req.InstanceClass, req.Engine, req.Username, req.Password, req.AllocatedStorage, req.SubnetGroupName)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Could not create RDS instance: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
+
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
 		return
 	}
 
@@ -356,6 +397,16 @@ func CreateCloudFrontDistributionHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
+
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
+		return
+	}
+
 	// Respond with the creation result (service creation successful)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -413,6 +464,16 @@ func CreateVPCHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := cloud.CreateVPC(req.CidrBlock, req.Region, req.Name)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Could not create VPC: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
+
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
 		return
 	}
 
