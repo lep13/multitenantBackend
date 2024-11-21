@@ -175,7 +175,7 @@ func QuarterlyUsageReport(userEmail string, services []models.Service) {
 	sendEmailAlert(userEmail, message)
 }
 
-// NotifyServiceFailure sends an email alert when a service fails
+// NotifyServiceFailure sends an email alert when a service fails kkk
 func NotifyServiceFailure(userEmail, serviceName, provider string) {
 	message := fmt.Sprintf(
 		"Hello,\n\nWe have detected a failure in your service '%s' on %s. Please check your service or contact support for assistance.\n\nThank you.",
