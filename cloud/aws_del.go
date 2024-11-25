@@ -3,6 +3,7 @@ package cloud
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -147,19 +148,41 @@ func DisableCloudFrontDistribution(distributionID string) (string, error) {
 		return "", fmt.Errorf("failed to disable CloudFront distribution: %w", err)
 	}
 
-	return fmt.Sprintf("CloudFront distribution '%s' disabled successfully", distributionID), nil
+	return fmt.Sprintf("CloudFront distribution '%s' disabled successfully, please delete later", distributionID), nil
 }
 
 // DeleteVPC deletes a VPC
-func DeleteVPC(vpcID string) (string, error) {
+func DeleteVPC(vpcName string) (string, string, error) {
 	cfg, err := LoadAWSConfig()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	client := ec2.NewFromConfig(cfg)
 
-	// Check and detach any internet gateways associated with the VPC
+	// Resolve VPC ID from VPC name
+	vpcOutput, err := client.DescribeVpcs(context.TODO(), &ec2.DescribeVpcsInput{
+		Filters: []ec2types.Filter{
+			{
+				Name:   aws.String("tag:Name"),
+				Values: []string{vpcName},
+			},
+		},
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("failed to describe VPCs by name: %w", err)
+	}
+
+	if len(vpcOutput.Vpcs) == 0 {
+		return "", "", fmt.Errorf("no VPC found with name '%s'", vpcName)
+	}
+
+	vpcID := *vpcOutput.Vpcs[0].VpcId
+
+	// Check dependencies
+	dependencyMessages := []string{}
+
+	// Check Internet Gateways
 	igwOutput, err := client.DescribeInternetGateways(context.TODO(), &ec2.DescribeInternetGatewaysInput{
 		Filters: []ec2types.Filter{
 			{
@@ -169,27 +192,13 @@ func DeleteVPC(vpcID string) (string, error) {
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to describe internet gateways: %w", err)
+		return "", "", fmt.Errorf("failed to describe internet gateways: %w", err)
+	}
+	if len(igwOutput.InternetGateways) > 0 {
+		dependencyMessages = append(dependencyMessages, "attached to an Internet Gateway")
 	}
 
-	for _, igw := range igwOutput.InternetGateways {
-		_, err := client.DetachInternetGateway(context.TODO(), &ec2.DetachInternetGatewayInput{
-			InternetGatewayId: igw.InternetGatewayId,
-			VpcId:             aws.String(vpcID),
-		})
-		if err != nil {
-			return "", fmt.Errorf("failed to detach internet gateway: %w", err)
-		}
-
-		_, err = client.DeleteInternetGateway(context.TODO(), &ec2.DeleteInternetGatewayInput{
-			InternetGatewayId: igw.InternetGatewayId,
-		})
-		if err != nil {
-			return "", fmt.Errorf("failed to delete internet gateway: %w", err)
-		}
-	}
-
-	// Delete subnets associated with the VPC
+	// Check Subnets
 	subnetsOutput, err := client.DescribeSubnets(context.TODO(), &ec2.DescribeSubnetsInput{
 		Filters: []ec2types.Filter{
 			{
@@ -199,20 +208,14 @@ func DeleteVPC(vpcID string) (string, error) {
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to describe subnets: %w", err)
+		return "", "", fmt.Errorf("failed to describe subnets: %w", err)
+	}
+	if len(subnetsOutput.Subnets) > 0 {
+		dependencyMessages = append(dependencyMessages, "contains subnets")
 	}
 
-	for _, subnet := range subnetsOutput.Subnets {
-		_, err = client.DeleteSubnet(context.TODO(), &ec2.DeleteSubnetInput{
-			SubnetId: subnet.SubnetId,
-		})
-		if err != nil {
-			return "", fmt.Errorf("failed to delete subnet: %w", err)
-		}
-	}
-
-	// Delete route tables associated with the VPC
-	routeTablesOutput, err := client.DescribeRouteTables(context.TODO(), &ec2.DescribeRouteTablesInput{
+	// Check Security Groups
+	sgOutput, err := client.DescribeSecurityGroups(context.TODO(), &ec2.DescribeSecurityGroupsInput{
 		Filters: []ec2types.Filter{
 			{
 				Name:   aws.String("vpc-id"),
@@ -221,27 +224,32 @@ func DeleteVPC(vpcID string) (string, error) {
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to describe route tables: %w", err)
+		return "", "", fmt.Errorf("failed to describe security groups: %w", err)
+	}
+	if len(sgOutput.SecurityGroups) > 1 { // Default security group is always present
+		dependencyMessages = append(dependencyMessages, "associated with security groups")
 	}
 
-	for _, routeTable := range routeTablesOutput.RouteTables {
-		// Skip the main route table
-		isMain := false
-		for _, assoc := range routeTable.Associations {
-			if assoc.Main != nil && *assoc.Main {
-				isMain = true
-				break
-			}
-		}
-		if isMain {
-			continue
-		}
+	// If dependencies exist, return a message indicating why the VPC cannot be deleted
+	if len(dependencyMessages) > 0 {
+		return fmt.Sprintf("VPC '%s' cannot be deleted because it is %s", vpcName, strings.Join(dependencyMessages, ", ")), "couldn't delete", nil
+	}
 
-		_, err = client.DeleteRouteTable(context.TODO(), &ec2.DeleteRouteTableInput{
-			RouteTableId: routeTable.RouteTableId,
+	// Delete the Internet Gateways
+	for _, igw := range igwOutput.InternetGateways {
+		_, err = client.DetachInternetGateway(context.TODO(), &ec2.DetachInternetGatewayInput{
+			InternetGatewayId: igw.InternetGatewayId,
+			VpcId:             aws.String(vpcID),
 		})
 		if err != nil {
-			return "", fmt.Errorf("failed to delete route table: %w", err)
+			return "", "", fmt.Errorf("failed to detach internet gateway '%s': %w", *igw.InternetGatewayId, err)
+		}
+
+		_, err = client.DeleteInternetGateway(context.TODO(), &ec2.DeleteInternetGatewayInput{
+			InternetGatewayId: igw.InternetGatewayId,
+		})
+		if err != nil {
+			return "", "", fmt.Errorf("failed to delete internet gateway '%s': %w", *igw.InternetGatewayId, err)
 		}
 	}
 
@@ -250,8 +258,8 @@ func DeleteVPC(vpcID string) (string, error) {
 		VpcId: aws.String(vpcID),
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to delete VPC: %w", err)
+		return "", "", fmt.Errorf("failed to delete VPC: %w", err)
 	}
 
-	return fmt.Sprintf("VPC '%s' deleted successfully", vpcID), nil
+	return fmt.Sprintf("VPC '%s' deleted successfully", vpcName), "deleted", nil
 }

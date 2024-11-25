@@ -522,6 +522,8 @@ func DeleteAWSServiceHandler(w http.ResponseWriter, r *http.Request) {
     var instanceID string
     var result interface{}
     var err error
+    var message string
+    var shouldUpdateStatus bool = false // Default: do not update DB unless explicitly set
 
     // Fetch the instance ID for services requiring it (EC2, RDS)
     if req.ServiceType == "Amazon EC2 (Elastic Compute Cloud)" || req.ServiceType == "Amazon RDS (Relational Database Service)" {
@@ -536,41 +538,71 @@ func DeleteAWSServiceHandler(w http.ResponseWriter, r *http.Request) {
     switch req.ServiceType {
     case "AWS Lambda":
         result, err = cloud.DeleteLambdaFunction(req.ServiceName)
+        if err == nil {
+            shouldUpdateStatus = true
+            message = "Service deleted successfully"
+        }
     case "Amazon EC2 (Elastic Compute Cloud)":
         result, err = cloud.TerminateEC2Instance(instanceID) // Use instanceID for EC2
+        if err == nil {
+            shouldUpdateStatus = true
+            message = "Service deleted successfully"
+        }
     case "Amazon S3 (Simple Storage Service)":
         result, err = cloud.DeleteS3Bucket(req.ServiceName)
+        if err == nil {
+            shouldUpdateStatus = true
+            message = "Service deleted successfully"
+        }
     case "Amazon RDS (Relational Database Service)":
         result, err = cloud.DeleteRDSInstance(instanceID) // Use instanceID for RDS
+        if err == nil {
+            shouldUpdateStatus = true
+            message = "Service deleted successfully"
+        }
     case "AWS CloudFront":
         result, err = cloud.DisableCloudFrontDistribution(req.ServiceID) // Use ServiceID for CloudFront
+        if err == nil {
+            shouldUpdateStatus = true
+            message = "Service disabled successfully"
+        }
     case "Amazon VPC (Virtual Private Cloud)":
-        result, err = cloud.DeleteVPC(req.ServiceName)
+        result, message, err = cloud.DeleteVPC(req.ServiceName)
+        if err == nil && message == "deleted" {
+            err = db.UpdateServiceStatus(username, req.ServiceType, req.ServiceName, "deleted")
+            if err != nil {
+                http.Error(w, fmt.Sprintf("Failed to update service status: %v", err), http.StatusInternalServerError)
+                return
+            }
+        }
     default:
         http.Error(w, "Invalid service type", http.StatusBadRequest)
         return
     }
 
-    if err != nil {
+    if err != nil && req.ServiceType != "Amazon VPC (Virtual Private Cloud)" {
+        // If deletion fails for non-VPC services, return the error
         http.Error(w, fmt.Sprintf("Failed to delete service: %v", err), http.StatusInternalServerError)
         return
     }
 
-    // Update service status in the database
-    updateIdentifier := req.ServiceName
-    if req.ServiceType == "AWS CloudFront" {
-        updateIdentifier = req.ServiceID // Use ServiceID for CloudFront in the update function
-    }
+    if shouldUpdateStatus {
+        // Update service status in the database only if deletion was successful
+        updateIdentifier := req.ServiceName
+        if req.ServiceType == "AWS CloudFront" {
+            updateIdentifier = req.ServiceID // Use ServiceID for CloudFront in the update function
+        }
 
-    err = db.UpdateServiceStatus(username, req.ServiceType, updateIdentifier, "deleted")
-    if err != nil {
-        http.Error(w, fmt.Sprintf("Failed to update service status: %v", err), http.StatusInternalServerError)
-        return
+        err = db.UpdateServiceStatus(username, req.ServiceType, updateIdentifier, "deleted")
+        if err != nil {
+            http.Error(w, fmt.Sprintf("Failed to update service status: %v", err), http.StatusInternalServerError)
+            return
+        }
     }
 
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]interface{}{
-        "message": "Service deleted successfully",
+        "message": message,
         "result":  result,
     })
 }

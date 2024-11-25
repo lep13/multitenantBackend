@@ -223,47 +223,50 @@ func UpdateServiceStatus(username, serviceType, identifier, status string) error
         filter = bson.M{
             "username":           username,
             "service":            serviceType,
-            "config.bucket_name": identifier, // Use bucket_name for S3
+            "config.bucket_name": identifier,
         }
     case "Amazon EC2 (Elastic Compute Cloud)":
         filter = bson.M{
             "username":              username,
             "service":               serviceType,
-            "config.instance_name":  identifier, // Use instance_name for EC2
+            "config.instance_name":  identifier,
         }
     case "AWS Lambda":
         filter = bson.M{
             "username":              username,
             "service":               serviceType,
-            "config.function_name":  identifier, // Use function_name for Lambda
+            "config.function_name":  identifier,
         }
     case "Amazon RDS (Relational Database Service)":
         filter = bson.M{
             "username":              username,
             "service":               serviceType,
-            "config.instance_id":    identifier, // Use instance_id for RDS
+            "config.instance_id":    identifier,
         }
     case "AWS CloudFront":
         filter = bson.M{
             "username":              username,
             "service":               serviceType,
-            "config.distribution_id": identifier, // Use distribution_id for CloudFront
+            "config.distribution_id": identifier,
         }
     case "Amazon VPC (Virtual Private Cloud)":
         filter = bson.M{
-            "username":              username,
-            "service":               serviceType,
-            "config.vpc_id":         identifier, // Use vpc_id for VPC
+            "username":        username,
+            "service":         serviceType,
+            "config.name":     identifier,
         }
     default:
         return fmt.Errorf("unsupported service type: '%s'", serviceType)
     }
 
+    // Log the filter for debugging
+    fmt.Printf("Filter used for update: %+v\n", filter)
+
     // Update query
     update := bson.M{
         "$set": bson.M{
             "service_status": status,
-            "end_timestamp":  time.Now(), // Add the end timestamp
+            "end_timestamp":  time.Now(),
         },
     }
 
@@ -273,9 +276,24 @@ func UpdateServiceStatus(username, serviceType, identifier, status string) error
         return fmt.Errorf("failed to update service status: %w", err)
     }
 
-    // If no matching documents were found, return an error
+    // log result of update
+    // fmt.Printf("Matched Count: %d, Modified Count: %d\n", result.MatchedCount, result.ModifiedCount)
+
+    // If no matching documents were found, debug deeper
     if result.MatchedCount == 0 {
-        return fmt.Errorf("no matching service found for user '%s' with service type '%s' and identifier '%s'", username, serviceType, identifier)
+        // Debug: Fetch the document to see why it isn't matching
+        var document bson.M
+        err = GetServicesCollection().FindOne(context.Background(), bson.M{
+            "username": username,
+        }).Decode(&document)
+        if err == nil {
+            fmt.Printf("Fetched document for debugging: %+v\n", document)
+        } else {
+            fmt.Printf("Failed to fetch document for debugging: %v\n", err)
+        }
+
+        return fmt.Errorf("no matching service found for user '%s' with service type '%s' and identifier '%s'",
+            username, serviceType, identifier)
     }
 
     return nil
