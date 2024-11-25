@@ -569,7 +569,7 @@ func DeleteAWSServiceHandler(w http.ResponseWriter, r *http.Request) {
     case "Amazon VPC (Virtual Private Cloud)":
         result, message, err = cloud.DeleteVPC(req.ServiceName)
         if err == nil && message == "deleted" {
-            err = db.UpdateServiceStatus(username, req.ServiceType, req.ServiceName, "deleted")
+            err = db.UpdateawsServiceStatus(username, req.ServiceType, req.ServiceName, "deleted")
             if err != nil {
                 http.Error(w, fmt.Sprintf("Failed to update service status: %v", err), http.StatusInternalServerError)
                 return
@@ -593,7 +593,7 @@ func DeleteAWSServiceHandler(w http.ResponseWriter, r *http.Request) {
             updateIdentifier = req.ServiceID // Use ServiceID for CloudFront in the update function
         }
 
-        err = db.UpdateServiceStatus(username, req.ServiceType, updateIdentifier, "deleted")
+        err = db.UpdateawsServiceStatus(username, req.ServiceType, updateIdentifier, "deleted")
         if err != nil {
             http.Error(w, fmt.Sprintf("Failed to update service status: %v", err), http.StatusInternalServerError)
             return

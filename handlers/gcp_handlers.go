@@ -412,5 +412,125 @@ json.NewEncoder(w).Encode(map[string]interface{}{
 	"region":           req.Region,
 	"database_version": req.DatabaseVersion,
 })
+}
 
+// DeleteGCPServiceHandler handles the deletion of GCP services
+func DeleteGCPServiceHandler(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("username")
+
+	var req struct {
+		ServiceType string `json:"service_type"`
+		ServiceName string `json:"service_name"` // Common identifier for all services
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if username == "" || req.ServiceType == "" || req.ServiceName == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch the service configuration from the database
+	var service bson.M
+	filter := bson.M{
+		"username": username,
+		"service":  req.ServiceType,
+	}
+
+	// Adjust the query based on the service type
+	switch req.ServiceType {
+	case "Compute Engine":
+		filter["config.name"] = req.ServiceName
+	case "Google Kubernetes Engine (GKE)":
+		filter["config.cluster_name"] = req.ServiceName
+	case "Cloud Storage":
+		filter["config.bucket_name"] = req.ServiceName
+	case "BigQuery":
+		filter["config.dataset_id"] = req.ServiceName
+	case "Cloud SQL":
+		filter["config.instance_name"] = req.ServiceName
+	default:
+		http.Error(w, "Unsupported service type", http.StatusBadRequest)
+		return
+	}
+
+	err := db.GetServicesCollection().FindOne(context.Background(), filter).Decode(&service)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Service not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Extract the necessary fields from the service configuration safely
+	config := service["config"].(bson.M)
+
+	zone, _ := config["zone"].(string)       // Use safe type assertion
+	// region, _ := config["region"].(string)   // Use safe type assertion
+	serviceID, _ := config["name"].(string)  // Use safe type assertion
+
+	var result interface{}
+	var message string
+	shouldUpdateStatus := false // Only update DB on successful deletion
+
+	// Call the appropriate deletion function based on the service type
+	switch req.ServiceType {
+	case "Compute Engine":
+		result, err = cloud.DeleteComputeEngineInstance(req.ServiceName, zone)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "Compute Engine instance deleted successfully"
+		}
+	case "Cloud Storage":
+		result, err = cloud.DeleteCloudStorage(req.ServiceName)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "Cloud Storage bucket deleted successfully"
+		}
+	case "Google Kubernetes Engine (GKE)":
+		result, err = cloud.DeleteGKECluster(req.ServiceName, zone)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "GKE cluster deleted successfully"
+		}
+	case "BigQuery":
+		result, err = cloud.DeleteBigQueryDataset(req.ServiceName)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "BigQuery dataset deleted successfully"
+		}
+	case "Cloud SQL":
+		result, err = cloud.DeleteCloudSQLInstance(serviceID)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "Cloud SQL instance deleted successfully"
+		}
+	default:
+		http.Error(w, "Unsupported service type", http.StatusBadRequest)
+		return
+	}
+
+	// Handle errors during deletion
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete service: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Update service status in the database if deletion succeeded
+	if shouldUpdateStatus {
+		err = db.UpdategcpServiceStatus(username, req.ServiceType, req.ServiceName, "deleted")
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to update service status: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Respond with the result
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": message,
+		"result":  result,
+	})
 }

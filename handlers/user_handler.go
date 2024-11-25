@@ -27,7 +27,7 @@ func GetCloudServicesHandler(w http.ResponseWriter, r *http.Request) {
 			"Amazon S3 (Simple Storage Service)",
 			"AWS Lambda",
 			"Amazon RDS (Relational Database Service)",
-			"Amazon DynamoDB",
+			// "Amazon DynamoDB",
 			"AWS CloudFront",
 			"Amazon VPC (Virtual Private Cloud)",
 		}
@@ -37,9 +37,9 @@ func GetCloudServicesHandler(w http.ResponseWriter, r *http.Request) {
 			"Cloud Storage",
 			"Google Kubernetes Engine (GKE)",
 			"BigQuery",
-			"Cloud Functions",
+			// "Cloud Functions",
 			"Cloud SQL",
-			"Cloud Pub/Sub",
+			// "Cloud Pub/Sub",
 		}
 	default:
 		http.Error(w, "Invalid provider. Supported values are 'aws' and 'gcp'.", http.StatusBadRequest)

@@ -214,7 +214,7 @@ func PushToServicesCollection(session bson.M, config bson.M) error {
 }
 
 // updates the service_status if service is deleted
-func UpdateServiceStatus(username, serviceType, identifier, status string) error {
+func UpdateawsServiceStatus(username, serviceType, identifier, status string) error {
     var filter bson.M
 
     // Build the filter dynamically based on the service type
@@ -278,6 +278,85 @@ func UpdateServiceStatus(username, serviceType, identifier, status string) error
 
     // log result of update
     // fmt.Printf("Matched Count: %d, Modified Count: %d\n", result.MatchedCount, result.ModifiedCount)
+
+    // If no matching documents were found, debug deeper
+    if result.MatchedCount == 0 {
+        // Debug: Fetch the document to see why it isn't matching
+        var document bson.M
+        err = GetServicesCollection().FindOne(context.Background(), bson.M{
+            "username": username,
+        }).Decode(&document)
+        if err == nil {
+            fmt.Printf("Fetched document for debugging: %+v\n", document)
+        } else {
+            fmt.Printf("Failed to fetch document for debugging: %v\n", err)
+        }
+
+        return fmt.Errorf("no matching service found for user '%s' with service type '%s' and identifier '%s'",
+            username, serviceType, identifier)
+    }
+
+    return nil
+}
+
+func UpdategcpServiceStatus(username, serviceType, identifier, status string) error {
+    var filter bson.M
+
+    // Build the filter dynamically based on the service type
+    switch serviceType {
+    case "Compute Engine":
+        filter = bson.M{
+            "username":     username,
+            "service":      serviceType,
+            "config.name":  identifier, // Match by the "name" field in the config
+        }
+    case "Cloud Storage":
+        filter = bson.M{
+            "username":     username,
+            "service":      serviceType,
+            "config.bucket_name": identifier,
+        }
+    case "Google Kubernetes Engine (GKE)":
+        filter = bson.M{
+            "username":     username,
+            "service":      serviceType,
+            "config.cluster_name":  identifier, 
+        }
+    case "BigQuery":
+        filter = bson.M{
+            "username":     username,
+            "service":      serviceType,
+            "config.dataset_id": identifier,
+        }
+    case "Cloud SQL":
+        filter = bson.M{
+            "username":     username,
+            "service":      serviceType,
+            "config.instance_name":  identifier, 
+        }
+    default:
+        return fmt.Errorf("unsupported service type: '%s'", serviceType)
+    }
+
+    // Log the filter for debugging
+    fmt.Printf("Filter used for update: %+v\n", filter)
+
+    // Update query
+    update := bson.M{
+        "$set": bson.M{
+            "service_status": status,
+            "end_timestamp":  time.Now(),
+        },
+    }
+
+    // Execute the update operation
+    result, err := GetServicesCollection().UpdateOne(context.Background(), filter, update)
+    if err != nil {
+        return fmt.Errorf("failed to update service status: %w", err)
+    }
+
+    // Log the result of the update
+    fmt.Printf("Matched Count: %d, Modified Count: %d\n", result.MatchedCount, result.ModifiedCount)
 
     // If no matching documents were found, debug deeper
     if result.MatchedCount == 0 {

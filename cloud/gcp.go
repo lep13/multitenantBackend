@@ -220,6 +220,31 @@ func CreateBigQueryDataset(datasetID, region string) (*bigquery.Dataset, error) 
 	return dataset, nil
 }
 
+// CreateCloudSQLInstance creates a Cloud SQL instance
+func CreateCloudSQLInstance(instanceName, projectID, region, tier, databaseVersion string) (*sqladmin.Operation, error) {
+	ctx := context.Background()
+	client, err := sqladmin.NewService(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Cloud SQL client: %v", err)
+	}
+
+	req := &sqladmin.DatabaseInstance{
+		Name:            instanceName,
+		Project:         projectID,
+		Region:          region,
+		DatabaseVersion: databaseVersion,
+		Settings: &sqladmin.Settings{
+			Tier: tier,
+		},
+	}
+
+	op, err := client.Instances.Insert(projectID, req).Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Cloud SQL instance: %v", err)
+	}
+	return op, nil
+}
+
 // // DeployCloudFunction deploys a Google Cloud Function
 // func DeployCloudFunction(functionName, region, runtime, entryPoint, bucketName, objectName string, environmentVariables map[string]string, triggerHTTP bool) (*functionspb.OperationMetadataV1, error) {
 // 	projectID, err := FetchProjectID() // Dynamically fetch the project ID
@@ -276,28 +301,3 @@ func CreateBigQueryDataset(datasetID, region string) (*bigquery.Dataset, error) 
 // 	// Return operation metadata for additional details
 // 	return op.Metadata.(*functionspb.OperationMetadataV1), nil
 // }
-
-// CreateCloudSQLInstance creates a Cloud SQL instance
-func CreateCloudSQLInstance(instanceName, projectID, region, tier, databaseVersion string) (*sqladmin.Operation, error) {
-	ctx := context.Background()
-	client, err := sqladmin.NewService(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Cloud SQL client: %v", err)
-	}
-
-	req := &sqladmin.DatabaseInstance{
-		Name:            instanceName,
-		Project:         projectID,
-		Region:          region,
-		DatabaseVersion: databaseVersion,
-		Settings: &sqladmin.Settings{
-			Tier: tier,
-		},
-	}
-
-	op, err := client.Instances.Insert(projectID, req).Do()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Cloud SQL instance: %v", err)
-	}
-	return op, nil
-}
