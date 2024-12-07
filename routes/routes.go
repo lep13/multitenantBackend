@@ -65,11 +65,12 @@ func InitializeRoutes() *mux.Router {
     userRouter.HandleFunc("/create-cloud-SQL", handlers.CreateCloudSQLHandler).Methods("POST")
  
     // router.HandleFunc("/fetch-aws-price", handlers.FetchAWSServicePriceHandler).Methods("POST")
-    router.HandleFunc("/fetch-gcp-price", handlers.FetchGCPServicePriceHandler).Methods("POST")
+    // router.HandleFunc("/fetch-gcp-price", handlers.FetchGCPServicePriceHandler).Methods("POST")
 
 	userRouter.HandleFunc("/delete-aws-service", handlers.DeleteAWSServiceHandler).Methods("POST")
     userRouter.HandleFunc("/delete-gcp-service", handlers.DeleteGCPServiceHandler).Methods("POST")
 
+    userRouter.HandleFunc("/send-notification", handlers.SendNotificationHandler).Methods("POST")
 
     return router
 }

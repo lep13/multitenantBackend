@@ -8,6 +8,7 @@ import (
 	"multitenant/db"
 	"net/http"
 	"time"
+	"multitenant/models"
 
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -134,7 +135,7 @@ func CompleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid or missing config in session", http.StatusInternalServerError)
 		return
 	}
-	
+
 	log.Printf("Fetched config: %+v\n", config)
 
 	// Update session details
@@ -159,6 +160,34 @@ func CompleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Println("Session added to services collection")
 
+	// Fetch manager information from the groups collection
+	groupID, _ := session["group_id"].(string)
+	manager, err := db.GetManagerByGroupID(groupID)
+	if err != nil {
+		log.Printf("Failed to fetch manager by group ID: %v\n", err)
+	} else {
+		// Create a notification for the manager
+		username, _ := session["username"].(string)
+		serviceName, _ := session["service"].(string)
+		cloudProvider, _ := session["provider"].(string)
+		timestamp, _ := session["timestamp"].(time.Time) // Use the session's timestamp
+
+		message := fmt.Sprintf("%s has created the service %s on %s.", username, serviceName, cloudProvider)
+
+		notification := models.Notification{
+			Manager:   manager,
+			Message:   message,
+			Timestamp: timestamp, // Use the existing timestamp
+		}
+
+		_, err := db.GetNotificationsCollection().InsertOne(context.Background(), notification)
+		if err != nil {
+			log.Printf("Failed to save notification: %v\n", err)
+		} else {
+			log.Println("Notification saved successfully")
+		}
+	}
+
 	// Delete session from `user_sessions` collection
 	_, err = db.GetUserSessionCollection().DeleteOne(context.Background(), bson.M{"session_id": req.SessionID})
 	if err != nil {
@@ -171,4 +200,75 @@ func CompleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Session finalized successfully"))
 	log.Println("CompleteSessionHandler finished successfully")
+}
+
+func SendNotificationHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username        string  `json:"username"`
+		Manager         string  `json:"manager"`
+		RequestedService string `json:"requested_service"`
+		EstimatedCost   float64 `json:"estimated_cost"`
+		Budget          float64 `json:"budget"` 
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	// Construct the notification message
+	message := fmt.Sprintf(
+		"%s has requested an increase in budget to create the service %s with an estimated cost of %.2f. Current budget is %.2f.",
+		req.Username, req.RequestedService, req.EstimatedCost, req.Budget,
+	)
+
+	notification := models.Notification{
+		Manager:   req.Manager,
+		Message:   message,
+		Timestamp: time.Now(),
+	}
+
+	// Save notification to the notifications collection
+	_, err := db.GetNotificationsCollection().InsertOne(context.Background(), notification)
+	if err != nil {
+		log.Printf("Failed to save notification: %v\n", err)
+		http.Error(w, "Failed to save notification", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Notification sent successfully"))
+}
+
+// NotifyManagerOnServiceAction sends notifications for service creation or deletion
+func NotifyManagerOnServiceAction(username string, service string, action string, groupID string, timestamp time.Time) error {
+    // Fetch manager name using groupID
+    var group bson.M
+    err := db.GetGroupsCollection().FindOne(context.Background(), bson.M{"group_id": groupID}).Decode(&group)
+    if err != nil {
+        return fmt.Errorf("Failed to fetch manager for group: %v", err)
+    }
+
+    manager, ok := group["manager"].(string)
+    if !ok || manager == "" {
+        return fmt.Errorf("Manager name not found for group: %s", groupID)
+    }
+
+    // Construct notification message
+    message := fmt.Sprintf("%s has %s service %s on %s.", username, action, service, timestamp.Format("Jan 02, 2006 15:04:05"))
+
+    // Create notification object
+    notification := models.Notification{
+        Manager:   manager,
+        Message:   message,
+        Timestamp: timestamp,
+    }
+
+    // Save notification to the database
+    _, err = db.GetNotificationsCollection().InsertOne(context.Background(), notification)
+    if err != nil {
+        return fmt.Errorf("Failed to save notification: %v", err)
+    }
+
+    return nil
 }

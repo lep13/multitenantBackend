@@ -4,88 +4,91 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"multitenant/cloud"
 	"multitenant/db"
+	"multitenant/models"
 	"net/http"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 )
 
 // Handler for creating EC2 instance
 func CreateEC2InstanceHandler(w http.ResponseWriter, r *http.Request) {
-    var req struct {
-        SessionID       string `json:"session_id"`
-        InstanceType    string `json:"instance_type"`
-        AmiID           string `json:"ami_id"`
-        KeyName         string `json:"key_name"`
-        SubnetID        string `json:"subnet_id"`
-        SecurityGroupID string `json:"security_group_id"`
-        InstanceName    string `json:"instance_name"`
-    }
+	var req struct {
+		SessionID       string `json:"session_id"`
+		InstanceType    string `json:"instance_type"`
+		AmiID           string `json:"ami_id"`
+		KeyName         string `json:"key_name"`
+		SubnetID        string `json:"subnet_id"`
+		SecurityGroupID string `json:"security_group_id"`
+		InstanceName    string `json:"instance_name"`
+	}
 
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        http.Error(w, "Invalid input", http.StatusBadRequest)
-        return
-    }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
 
-    // Fetch session details
-    var session bson.M
-    err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
-    if err != nil {
-        http.Error(w, "Session not found", http.StatusNotFound)
-        return
-    }
+	// Fetch session details
+	var session bson.M
+	err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
+	if err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
 
-    // Check if the session is approved
-    status := session["status"].(string)
-    if status != "ok" {
-        http.Error(w, "Session is not approved for service creation", http.StatusForbidden)
-        return
-    }
+	// Check if the session is approved
+	status := session["status"].(string)
+	if status != "ok" {
+		http.Error(w, "Session is not approved for service creation", http.StatusForbidden)
+		return
+	}
 
-    // Create the EC2 instance
-    result, err := cloud.CreateEC2Instance(req.InstanceType, req.AmiID, req.KeyName, req.SubnetID, req.SecurityGroupID, req.InstanceName)
-    if err != nil {
-        http.Error(w, fmt.Sprintf("Failed to create EC2 instance: %v", err), http.StatusInternalServerError)
-        return
-    }
+	// Create the EC2 instance
+	result, err := cloud.CreateEC2Instance(req.InstanceType, req.AmiID, req.KeyName, req.SubnetID, req.SecurityGroupID, req.InstanceName)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create EC2 instance: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-    // Extract the instance ID
-    if len(result.Instances) == 0 {
-        http.Error(w, "Failed to fetch instance ID", http.StatusInternalServerError)
-        return
-    }
-    instanceID := *result.Instances[0].InstanceId
+	// Extract the instance ID
+	if len(result.Instances) == 0 {
+		http.Error(w, "Failed to fetch instance ID", http.StatusInternalServerError)
+		return
+	}
+	instanceID := *result.Instances[0].InstanceId
 
-    // Update the configuration with the instance ID
-    config := bson.M{
-        "instance_type":    req.InstanceType,
-        "ami_id":           req.AmiID,
-        "key_name":         req.KeyName,
-        "subnet_id":        req.SubnetID,
-        "security_group_id": req.SecurityGroupID,
-        "instance_name":    req.InstanceName,
-        "instance_id":      instanceID, // Add instance ID here
-    }
+	// Update the configuration with the instance ID
+	config := bson.M{
+		"instance_type":     req.InstanceType,
+		"ami_id":            req.AmiID,
+		"key_name":          req.KeyName,
+		"subnet_id":         req.SubnetID,
+		"security_group_id": req.SecurityGroupID,
+		"instance_name":     req.InstanceName,
+		"instance_id":       instanceID, // Add instance ID here
+	}
 
-    // Store configuration in the user_sessions collection
-    filter := bson.M{"session_id": req.SessionID}
-    update := bson.M{"$set": bson.M{"config": config}}
+	// Store configuration in the user_sessions collection
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
 
-    _, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
-    if err != nil {
-        http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
-        return
-    }
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
+		return
+	}
 
-    // Respond with the creation result
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]interface{}{
-        "message":     "EC2 instance created successfully",
-        "result":      result,
-        "config":      config,
-        "instance_id": instanceID,
-    })
+	// Respond with the creation result
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":     "EC2 instance created successfully",
+		"result":      result,
+		"config":      config,
+		"instance_id": instanceID,
+	})
 }
 
 // CreateS3BucketHandler handles requests to create an S3 bucket
@@ -119,9 +122,9 @@ func CreateS3BucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Configuration details
 	config := bson.M{
-		"bucket_name":    req.BucketName,
-		"versioning":     req.Versioning,
-		"region":         req.Region,
+		"bucket_name": req.BucketName,
+		"versioning":  req.Versioning,
+		"region":      req.Region,
 	}
 
 	// Proceed with service creation
@@ -210,11 +213,11 @@ func CreateLambdaFunctionHandler(w http.ResponseWriter, r *http.Request) {
 	// Respond with the creation result (service creation successful)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":      "Lambda function created successfully",
-		"result":       result,
-		"config":       config,
+		"message":       "Lambda function created successfully",
+		"result":        result,
+		"config":        config,
 		"function_name": req.FunctionName,
-		"region":       req.Region,
+		"region":        req.Region,
 	})
 
 }
@@ -255,14 +258,14 @@ func CreateRDSInstanceHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Configuration details
 	config := bson.M{
-		"db_name":            req.DBName,
-		"instance_id":        req.InstanceID,
-		"instance_class":     req.InstanceClass,
-		"engine":             req.Engine,
-		"username":           req.Username,
-		"password":           req.Password,
-		"allocated_storage":  req.AllocatedStorage,
-		"subnet_group_name":  req.SubnetGroupName,
+		"db_name":           req.DBName,
+		"instance_id":       req.InstanceID,
+		"instance_class":    req.InstanceClass,
+		"engine":            req.Engine,
+		"username":          req.Username,
+		"password":          req.Password,
+		"allocated_storage": req.AllocatedStorage,
+		"subnet_group_name": req.SubnetGroupName,
 	}
 
 	// Proceed with RDS instance creation
@@ -353,80 +356,80 @@ func CreateRDSInstanceHandler(w http.ResponseWriter, r *http.Request) {
 
 // Handler for Creating CloudFront Distribution
 func CreateCloudFrontDistributionHandler(w http.ResponseWriter, r *http.Request) {
-    var req struct {
-        SessionID        string `json:"session_id"`
-        OriginDomainName string `json:"origin_domain_name"`
-        Comment          string `json:"comment"`
-        Region           string `json:"region"`
-        MinTTL           int64  `json:"min_ttl"`
-        BucketName       string `json:"bucket_name"`
-    }
+	var req struct {
+		SessionID        string `json:"session_id"`
+		OriginDomainName string `json:"origin_domain_name"`
+		Comment          string `json:"comment"`
+		Region           string `json:"region"`
+		MinTTL           int64  `json:"min_ttl"`
+		BucketName       string `json:"bucket_name"`
+	}
 
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        http.Error(w, "Invalid input", http.StatusBadRequest)
-        return
-    }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
 
-    // Fetch session details
-    var session bson.M
-    err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
-    if err != nil {
-        http.Error(w, "Session not found", http.StatusNotFound)
-        return
-    }
+	// Fetch session details
+	var session bson.M
+	err := db.GetUserSessionCollection().FindOne(context.Background(), bson.M{"session_id": req.SessionID}).Decode(&session)
+	if err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
 
-    // Check if the session is approved
-    status := session["status"].(string)
-    if status != "ok" {
-        http.Error(w, "Session is not approved for service creation", http.StatusForbidden)
-        return
-    }
+	// Check if the session is approved
+	status := session["status"].(string)
+	if status != "ok" {
+		http.Error(w, "Session is not approved for service creation", http.StatusForbidden)
+		return
+	}
 
-    // Create CloudFront distribution
-    distributionResult, oaiCanonicalUserID, err := cloud.CreateCloudFrontDistribution(req.OriginDomainName, req.Comment, req.Region, req.MinTTL)
-    if err != nil {
-        http.Error(w, fmt.Sprintf("Could not create CloudFront distribution: %v", err), http.StatusInternalServerError)
-        return
-    }
+	// Create CloudFront distribution
+	distributionResult, oaiCanonicalUserID, err := cloud.CreateCloudFrontDistribution(req.OriginDomainName, req.Comment, req.Region, req.MinTTL)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Could not create CloudFront distribution: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-    // Extract the Distribution ID
-    distributionID := *distributionResult.Distribution.Id
+	// Extract the Distribution ID
+	distributionID := *distributionResult.Distribution.Id
 
-    // Create the S3 Bucket and attach the policy
-    _, err = cloud.CreateS3BucketWithPolicy(req.BucketName, req.Region, oaiCanonicalUserID)
-    if err != nil {
-        http.Error(w, fmt.Sprintf("Could not create S3 bucket or attach policy: %v", err), http.StatusInternalServerError)
-        return
-    }
+	// Create the S3 Bucket and attach the policy
+	_, err = cloud.CreateS3BucketWithPolicy(req.BucketName, req.Region, oaiCanonicalUserID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Could not create S3 bucket or attach policy: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-    // Store configuration in the user_sessions collection
-    config := bson.M{
-        "origin_domain_name": req.OriginDomainName,
-        "comment":            req.Comment,
-        "region":             req.Region,
-        "min_ttl":            req.MinTTL,
-        "bucket_name":        req.BucketName,
-        "distribution_id":    distributionID, // Store the distribution ID
-    }
+	// Store configuration in the user_sessions collection
+	config := bson.M{
+		"origin_domain_name": req.OriginDomainName,
+		"comment":            req.Comment,
+		"region":             req.Region,
+		"min_ttl":            req.MinTTL,
+		"bucket_name":        req.BucketName,
+		"distribution_id":    distributionID, // Store the distribution ID
+	}
 
-    filter := bson.M{"session_id": req.SessionID}
-    update := bson.M{"$set": bson.M{"config": config}}
+	filter := bson.M{"session_id": req.SessionID}
+	update := bson.M{"$set": bson.M{"config": config}}
 
-    _, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
-    if err != nil {
-        http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
-        return
-    }
+	_, err = db.GetUserSessionCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(w, "Failed to store configuration in user_sessions", http.StatusInternalServerError)
+		return
+	}
 
-    // Respond with the creation result (service creation successful)
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]interface{}{
-        "message":           "CloudFront distribution created successfully",
-        "result":            distributionResult,
-        "config":            config,
-        "origin_domain_name": req.OriginDomainName,
-        "region":            req.Region,
-    })
+	// Respond with the creation result (service creation successful)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":            "CloudFront distribution created successfully",
+		"result":             distributionResult,
+		"config":             config,
+		"origin_domain_name": req.OriginDomainName,
+		"region":             req.Region,
+	})
 }
 
 // Handler for creating VPC with session management
@@ -490,119 +493,146 @@ func CreateVPCHandler(w http.ResponseWriter, r *http.Request) {
 	// Respond with the creation result (service creation successful)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":   "VPC created successfully",
-		"result":    result,
-		"config":    config,
+		"message":    "VPC created successfully",
+		"result":     result,
+		"config":     config,
 		"cidr_block": req.CidrBlock,
-		"region":    req.Region,
+		"region":     req.Region,
 	})
 
 }
 
 // DeleteAWSServiceHandler handles AWS service deletions
 func DeleteAWSServiceHandler(w http.ResponseWriter, r *http.Request) {
-    username := r.URL.Query().Get("username")
+	username := r.URL.Query().Get("username")
 
-    var req struct {
-        ServiceType string `json:"service_type"`
-        ServiceName string `json:"service_name"` // For all services except CloudFront
-        ServiceID   string `json:"service_id"`   // For CloudFront only
-    }
+	var req struct {
+		ServiceType string `json:"service_type"`
+		ServiceName string `json:"service_name"`
+		ServiceID   string `json:"service_id"` // For CloudFront only
+	}
 
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        http.Error(w, "Invalid request payload", http.StatusBadRequest)
-        return
-    }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
 
-    if username == "" || req.ServiceType == "" || (req.ServiceType == "AWS CloudFront" && req.ServiceID == "") || (req.ServiceType != "AWS CloudFront" && req.ServiceName == "") {
-        http.Error(w, "Missing required fields", http.StatusBadRequest)
-        return
-    }
+	if username == "" || req.ServiceType == "" || (req.ServiceType == "AWS CloudFront" && req.ServiceID == "") || (req.ServiceType != "AWS CloudFront" && req.ServiceName == "") {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
 
-    var instanceID string
-    var result interface{}
-    var err error
-    var message string
-    var shouldUpdateStatus bool = false // Default: do not update DB unless explicitly set
+	var instanceID string
+	var result interface{}
+	var err error
+	var message string
+	var shouldUpdateStatus bool = false
 
-    // Fetch the instance ID for services requiring it (EC2, RDS)
-    if req.ServiceType == "Amazon EC2 (Elastic Compute Cloud)" || req.ServiceType == "Amazon RDS (Relational Database Service)" {
-        instanceID, err = db.GetInstanceIDByInstanceName(username, req.ServiceType, req.ServiceName)
-        if err != nil {
-            http.Error(w, fmt.Sprintf("Failed to fetch instance ID: %v", err), http.StatusInternalServerError)
-            return
-        }
-    }
+	// Call the appropriate deletion function based on the service type
+	switch req.ServiceType {
+	case "AWS Lambda":
+		result, err = cloud.DeleteLambdaFunction(req.ServiceName)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "AWS Lambda function deleted successfully"
+		}
+	case "Amazon EC2 (Elastic Compute Cloud)":
+		result, err = cloud.TerminateEC2Instance(instanceID)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "Amazon EC2 instance deleted successfully"
+		}
+	case "Amazon S3 (Simple Storage Service)":
+		result, err = cloud.DeleteS3Bucket(req.ServiceName)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "Amazon S3 bucket deleted successfully"
+		}
+	case "Amazon RDS (Relational Database Service)":
+		result, err = cloud.DeleteRDSInstance(instanceID)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "Amazon RDS instance deleted successfully"
+		}
+	case "AWS CloudFront":
+		result, err = cloud.DisableCloudFrontDistribution(req.ServiceID)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "AWS CloudFront distribution disabled successfully"
+		}
+	case "Amazon VPC (Virtual Private Cloud)":
+		result, message, err = cloud.DeleteVPC(req.ServiceName)
+		if err == nil && message == "deleted" {
+			shouldUpdateStatus = true
+		}
+	default:
+		http.Error(w, "Invalid service type", http.StatusBadRequest)
+		return
+	}
 
-    // Call the appropriate deletion function based on the service type
-    switch req.ServiceType {
-    case "AWS Lambda":
-        result, err = cloud.DeleteLambdaFunction(req.ServiceName)
-        if err == nil {
-            shouldUpdateStatus = true
-            message = "Service deleted successfully"
-        }
-    case "Amazon EC2 (Elastic Compute Cloud)":
-        result, err = cloud.TerminateEC2Instance(instanceID) // Use instanceID for EC2
-        if err == nil {
-            shouldUpdateStatus = true
-            message = "Service deleted successfully"
-        }
-    case "Amazon S3 (Simple Storage Service)":
-        result, err = cloud.DeleteS3Bucket(req.ServiceName)
-        if err == nil {
-            shouldUpdateStatus = true
-            message = "Service deleted successfully"
-        }
-    case "Amazon RDS (Relational Database Service)":
-        result, err = cloud.DeleteRDSInstance(instanceID) // Use instanceID for RDS
-        if err == nil {
-            shouldUpdateStatus = true
-            message = "Service deleted successfully"
-        }
-    case "AWS CloudFront":
-        result, err = cloud.DisableCloudFrontDistribution(req.ServiceID) // Use ServiceID for CloudFront
-        if err == nil {
-            shouldUpdateStatus = true
-            message = "Service disabled successfully"
-        }
-    case "Amazon VPC (Virtual Private Cloud)":
-        result, message, err = cloud.DeleteVPC(req.ServiceName)
-        if err == nil && message == "deleted" {
-            err = db.UpdateawsServiceStatus(username, req.ServiceType, req.ServiceName, "deleted")
-            if err != nil {
-                http.Error(w, fmt.Sprintf("Failed to update service status: %v", err), http.StatusInternalServerError)
-                return
-            }
-        }
-    default:
-        http.Error(w, "Invalid service type", http.StatusBadRequest)
-        return
-    }
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete service: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-    if err != nil && req.ServiceType != "Amazon VPC (Virtual Private Cloud)" {
-        // If deletion fails for non-VPC services, return the error
-        http.Error(w, fmt.Sprintf("Failed to delete service: %v", err), http.StatusInternalServerError)
-        return
-    }
+	if shouldUpdateStatus {
+		// Update the service status in the database
+		updateIdentifier := req.ServiceName
+		if req.ServiceType == "AWS CloudFront" {
+			updateIdentifier = req.ServiceID
+		} else if req.ServiceType == "Amazon EC2 (Elastic Compute Cloud)" || req.ServiceType == "Amazon RDS (Relational Database Service)" {
+			updateIdentifier = instanceID
+		}
 
-    if shouldUpdateStatus {
-        // Update service status in the database only if deletion was successful
-        updateIdentifier := req.ServiceName
-        if req.ServiceType == "AWS CloudFront" {
-            updateIdentifier = req.ServiceID // Use ServiceID for CloudFront in the update function
-        }
+		err = db.UpdateawsServiceStatus(username, req.ServiceType, updateIdentifier, "deleted")
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to update service status: %v", err), http.StatusInternalServerError)
+			return
+		}
 
-        err = db.UpdateawsServiceStatus(username, req.ServiceType, updateIdentifier, "deleted")
-        if err != nil {
-            http.Error(w, fmt.Sprintf("Failed to update service status: %v", err), http.StatusInternalServerError)
-            return
-        }
-    }
+		// Fetch updated service details for notification
+		var updatedService bson.M
+		err = db.GetServicesCollection().FindOne(context.Background(), bson.M{
+			"username":    username,
+			"service":     req.ServiceType,
+			"config.name": req.ServiceName,
+		}).Decode(&updatedService)
+		if err != nil {
+			log.Printf("Failed to fetch updated service: %v", err)
+			http.Error(w, "Failed to fetch updated service details", http.StatusInternalServerError)
+			return
+		}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]interface{}{
-        "message": message,
-        "result":  result,
-    })
+		// Extract necessary details for notification
+		config := updatedService["config"].(bson.M)
+		groupID, _ := config["group_id"].(string)
+		endTimestamp, _ := updatedService["end_timestamp"].(time.Time)
+
+		// Fetch manager information
+		manager, err := db.GetManagerByGroupID(groupID)
+		if err != nil {
+			log.Printf("Failed to fetch manager for group ID %s: %v", groupID, err)
+		} else {
+			// Save notification
+			notification := models.Notification{
+				Manager:   manager,
+				Message:   fmt.Sprintf("%s has deleted the service %s from AWS.", username, req.ServiceName),
+				Timestamp: endTimestamp,
+			}
+
+			_, err = db.GetNotificationsCollection().InsertOne(context.Background(), notification)
+			if err != nil {
+				log.Printf("Failed to save notification: %v", err)
+			} else {
+				log.Println("Notification saved successfully")
+			}
+		}
+	}
+
+	// Respond with the result
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": message,
+		"result":  result,
+	})
 }

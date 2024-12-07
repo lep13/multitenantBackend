@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"multitenant/config"
@@ -26,6 +27,10 @@ func GetUserSessionCollection() *mongo.Collection {
 
 func GetServicesCollection() *mongo.Collection {
 	return newClient.Database("mydatabase").Collection("services")
+}
+
+func GetNotificationsCollection() *mongo.Collection {
+	return newClient.Database("mydatabase").Collection("notifications")
 }
 
 // Initialize MongoDB connection
@@ -195,231 +200,250 @@ func MarkSessionCompleted(sessionID string, serviceStatus string) error {
 
 // saves service data in the `services` collection
 func PushToServicesCollection(session bson.M, config bson.M) error {
-    // Add configuration details and timestamp
-    session["config"] = config
-    session["timestamp"] = time.Now()
+	// Add configuration details and timestamp
+	session["config"] = config
+	session["timestamp"] = time.Now()
 
-    // Remove `_id` to avoid duplicate key errors
-    delete(session, "_id")
+	// Remove `_id` to avoid duplicate key errors
+	delete(session, "_id")
 
-    // Use `Upsert` to ensure no duplicate documents
-    filter := bson.M{"session_id": session["session_id"]}
-    update := bson.M{"$set": session}
+	// Use `Upsert` to ensure no duplicate documents
+	filter := bson.M{"session_id": session["session_id"]}
+	update := bson.M{"$set": session}
 
-    _, err := GetServicesCollection().UpdateOne(context.Background(), filter, update, options.Update().SetUpsert(true))
-    if err != nil {
-        return fmt.Errorf("failed to upsert into services collection: %w", err)
-    }
-    return nil
+	_, err := GetServicesCollection().UpdateOne(context.Background(), filter, update, options.Update().SetUpsert(true))
+	if err != nil {
+		return fmt.Errorf("failed to upsert into services collection: %w", err)
+	}
+	return nil
 }
 
 // updates the service_status if service is deleted
 func UpdateawsServiceStatus(username, serviceType, identifier, status string) error {
-    var filter bson.M
+	var filter bson.M
 
-    // Build the filter dynamically based on the service type
-    switch serviceType {
-    case "Amazon S3 (Simple Storage Service)":
-        filter = bson.M{
-            "username":           username,
-            "service":            serviceType,
-            "config.bucket_name": identifier,
-        }
-    case "Amazon EC2 (Elastic Compute Cloud)":
-        filter = bson.M{
-            "username":              username,
-            "service":               serviceType,
-            "config.instance_name":  identifier,
-        }
-    case "AWS Lambda":
-        filter = bson.M{
-            "username":              username,
-            "service":               serviceType,
-            "config.function_name":  identifier,
-        }
-    case "Amazon RDS (Relational Database Service)":
-        filter = bson.M{
-            "username":              username,
-            "service":               serviceType,
-            "config.instance_id":    identifier,
-        }
-    case "AWS CloudFront":
-        filter = bson.M{
-            "username":              username,
-            "service":               serviceType,
-            "config.distribution_id": identifier,
-        }
-    case "Amazon VPC (Virtual Private Cloud)":
-        filter = bson.M{
-            "username":        username,
-            "service":         serviceType,
-            "config.name":     identifier,
-        }
-    default:
-        return fmt.Errorf("unsupported service type: '%s'", serviceType)
-    }
+	// Build the filter dynamically based on the service type
+	switch serviceType {
+	case "Amazon S3 (Simple Storage Service)":
+		filter = bson.M{
+			"username":           username,
+			"service":            serviceType,
+			"config.bucket_name": identifier,
+		}
+	case "Amazon EC2 (Elastic Compute Cloud)":
+		filter = bson.M{
+			"username":             username,
+			"service":              serviceType,
+			"config.instance_name": identifier,
+		}
+	case "AWS Lambda":
+		filter = bson.M{
+			"username":             username,
+			"service":              serviceType,
+			"config.function_name": identifier,
+		}
+	case "Amazon RDS (Relational Database Service)":
+		filter = bson.M{
+			"username":           username,
+			"service":            serviceType,
+			"config.instance_id": identifier,
+		}
+	case "AWS CloudFront":
+		filter = bson.M{
+			"username":               username,
+			"service":                serviceType,
+			"config.distribution_id": identifier,
+		}
+	case "Amazon VPC (Virtual Private Cloud)":
+		filter = bson.M{
+			"username":    username,
+			"service":     serviceType,
+			"config.name": identifier,
+		}
+	default:
+		return fmt.Errorf("unsupported service type: '%s'", serviceType)
+	}
 
-    // Log the filter for debugging
-    fmt.Printf("Filter used for update: %+v\n", filter)
+	// Log the filter for debugging
+	fmt.Printf("Filter used for update: %+v\n", filter)
 
-    // Update query
-    update := bson.M{
-        "$set": bson.M{
-            "service_status": status,
-            "end_timestamp":  time.Now(),
-        },
-    }
+	// Update query
+	update := bson.M{
+		"$set": bson.M{
+			"service_status": status,
+			"end_timestamp":  time.Now(),
+		},
+	}
 
-    // Execute the update operation
-    result, err := GetServicesCollection().UpdateOne(context.Background(), filter, update)
-    if err != nil {
-        return fmt.Errorf("failed to update service status: %w", err)
-    }
+	// Execute the update operation
+	result, err := GetServicesCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		return fmt.Errorf("failed to update service status: %w", err)
+	}
 
-    // log result of update
-    // fmt.Printf("Matched Count: %d, Modified Count: %d\n", result.MatchedCount, result.ModifiedCount)
+	if result.MatchedCount == 0 {
+		fmt.Printf("No documents matched the filter. Debugging...\n")
+		var document bson.M
+		err = GetServicesCollection().FindOne(context.Background(), bson.M{
+			"username": username,
+			"service":  serviceType,
+		}).Decode(&document)
+		if err == nil {
+			fmt.Printf("Fetched document for debugging: %+v\n", document)
+		} else {
+			fmt.Printf("Failed to fetch document for debugging: %v\n", err)
+		}
 
-    // If no matching documents were found, debug deeper
-    if result.MatchedCount == 0 {
-        // Debug: Fetch the document to see why it isn't matching
-        var document bson.M
-        err = GetServicesCollection().FindOne(context.Background(), bson.M{
-            "username": username,
-        }).Decode(&document)
-        if err == nil {
-            fmt.Printf("Fetched document for debugging: %+v\n", document)
-        } else {
-            fmt.Printf("Failed to fetch document for debugging: %v\n", err)
-        }
+		return fmt.Errorf("no matching service found for user '%s' with service type '%s' and identifier '%s'",
+			username, serviceType, identifier)
+	}
 
-        return fmt.Errorf("no matching service found for user '%s' with service type '%s' and identifier '%s'",
-            username, serviceType, identifier)
-    }
-
-    return nil
+	fmt.Printf("Update successful. Matched: %d, Modified: %d\n", result.MatchedCount, result.ModifiedCount)
+	return nil
 }
 
 func UpdategcpServiceStatus(username, serviceType, identifier, status string) error {
-    var filter bson.M
+	var filter bson.M
 
-    // Build the filter dynamically based on the service type
-    switch serviceType {
-    case "Compute Engine":
-        filter = bson.M{
-            "username":     username,
-            "service":      serviceType,
-            "config.name":  identifier, // Match by the "name" field in the config
-        }
-    case "Cloud Storage":
-        filter = bson.M{
-            "username":     username,
-            "service":      serviceType,
-            "config.bucket_name": identifier,
-        }
-    case "Google Kubernetes Engine (GKE)":
-        filter = bson.M{
-            "username":     username,
-            "service":      serviceType,
-            "config.cluster_name":  identifier, 
-        }
-    case "BigQuery":
-        filter = bson.M{
-            "username":     username,
-            "service":      serviceType,
-            "config.dataset_id": identifier,
-        }
-    case "Cloud SQL":
-        filter = bson.M{
-            "username":     username,
-            "service":      serviceType,
-            "config.instance_name":  identifier, 
-        }
-    default:
-        return fmt.Errorf("unsupported service type: '%s'", serviceType)
-    }
+	// Build the filter dynamically based on the service type
+	switch serviceType {
+	case "Compute Engine":
+		filter = bson.M{
+			"username":    username,
+			"service":     serviceType,
+			"config.name": identifier, // Match by the "name" field in the config
+		}
+	case "Cloud Storage":
+		filter = bson.M{
+			"username":           username,
+			"service":            serviceType,
+			"config.bucket_name": identifier,
+		}
+	case "Google Kubernetes Engine (GKE)":
+		filter = bson.M{
+			"username":            username,
+			"service":             serviceType,
+			"config.cluster_name": identifier,
+		}
+	case "BigQuery":
+		filter = bson.M{
+			"username":          username,
+			"service":           serviceType,
+			"config.dataset_id": identifier,
+		}
+	case "Cloud SQL":
+		filter = bson.M{
+			"username":             username,
+			"service":              serviceType,
+			"config.instance_name": identifier,
+		}
+	default:
+		return fmt.Errorf("unsupported service type: '%s'", serviceType)
+	}
 
-    // Log the filter for debugging
-    fmt.Printf("Filter used for update: %+v\n", filter)
+	// Log the filter for debugging
+	fmt.Printf("Filter used for update: %+v\n", filter)
 
-    // Update query
-    update := bson.M{
-        "$set": bson.M{
-            "service_status": status,
-            "end_timestamp":  time.Now(),
-        },
-    }
+	// Update query
+	update := bson.M{
+		"$set": bson.M{
+			"service_status": status,
+			"end_timestamp":  time.Now(),
+		},
+	}
 
-    // Execute the update operation
-    result, err := GetServicesCollection().UpdateOne(context.Background(), filter, update)
-    if err != nil {
-        return fmt.Errorf("failed to update service status: %w", err)
-    }
+	// Execute the update operation
+	result, err := GetServicesCollection().UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		return fmt.Errorf("failed to update service status: %w", err)
+	}
 
-    // Log the result of the update
-    fmt.Printf("Matched Count: %d, Modified Count: %d\n", result.MatchedCount, result.ModifiedCount)
+	// Log the result of the update
+	fmt.Printf("Matched Count: %d, Modified Count: %d\n", result.MatchedCount, result.ModifiedCount)
 
-    // If no matching documents were found, debug deeper
-    if result.MatchedCount == 0 {
-        // Debug: Fetch the document to see why it isn't matching
-        var document bson.M
-        err = GetServicesCollection().FindOne(context.Background(), bson.M{
-            "username": username,
-        }).Decode(&document)
-        if err == nil {
-            fmt.Printf("Fetched document for debugging: %+v\n", document)
-        } else {
-            fmt.Printf("Failed to fetch document for debugging: %v\n", err)
-        }
+	// If no matching documents were found, debug deeper
+	if result.MatchedCount == 0 {
+		// Debug: Fetch the document to see why it isn't matching
+		var document bson.M
+		err = GetServicesCollection().FindOne(context.Background(), bson.M{
+			"username": username,
+		}).Decode(&document)
+		if err == nil {
+			fmt.Printf("Fetched document for debugging: %+v\n", document)
+		} else {
+			fmt.Printf("Failed to fetch document for debugging: %v\n", err)
+		}
 
-        return fmt.Errorf("no matching service found for user '%s' with service type '%s' and identifier '%s'",
-            username, serviceType, identifier)
-    }
+		return fmt.Errorf("no matching service found for user '%s' with service type '%s' and identifier '%s'",
+			username, serviceType, identifier)
+	}
 
-    return nil
+	return nil
 }
 
 // based on the username and instance name.
 func GetInstanceIDByInstanceName(username, serviceType, instanceName string) (string, error) {
-    var serviceData bson.M
+	var serviceData bson.M
 
-    // Determine the appropriate field for instance name based on the service type
-    var instanceNameField string
-    if serviceType == "Amazon EC2 (Elastic Compute Cloud)" {
-        instanceNameField = "config.instance_name"
-    } else if serviceType == "Amazon RDS (Relational Database Service)" {
-        instanceNameField = "config.db_name"
-    } else {
-        return "", fmt.Errorf("unsupported service type for instance ID retrieval: %s", serviceType)
-    }
+	// Determine the appropriate field for querying the instance name
+	var instanceNameField string
+	if serviceType == "Amazon EC2 (Elastic Compute Cloud)" {
+		instanceNameField = "config.instance_name"
+	} else if serviceType == "Amazon RDS (Relational Database Service)" {
+		instanceNameField = "config.db_name" // Using db_name as RDS identifier
+	} else {
+		return "", fmt.Errorf("unsupported service type for instance ID retrieval: %s", serviceType)
+	}
 
-    // Query the MongoDB collection
-    err := GetServicesCollection().FindOne(context.Background(), bson.M{
-        "username": username,
-        "service":  serviceType,
-        instanceNameField: instanceName,
-    }).Decode(&serviceData)
+	// Query the MongoDB collection
+	err := GetServicesCollection().FindOne(context.Background(), bson.M{
+		"username":        username,
+		"service":         serviceType,
+		instanceNameField: instanceName,
+	}).Decode(&serviceData)
 
-    if err != nil {
-        if err == mongo.ErrNoDocuments {
-            return "", fmt.Errorf("no matching document found for username '%s' and instance name '%s'", username, instanceName)
-        }
-        return "", fmt.Errorf("failed to fetch service details from database: %w", err)
-    }
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return "", fmt.Errorf("no matching document found for username '%s' and instance name '%s'", username, instanceName)
+		}
+		return "", fmt.Errorf("failed to fetch service details from database: %w", err)
+	}
 
-    // Log the fetched data for debugging
-    fmt.Printf("Fetched service document: %+v\n", serviceData)
+	// Log the fetched data for debugging
+	fmt.Printf("Fetched service document: %+v\n", serviceData)
 
-    // Extract the config field
-    config, ok := serviceData["config"].(bson.M)
-    if !ok {
-        return "", fmt.Errorf("invalid config format in service document")
-    }
+	// Extract the config field
+	config, ok := serviceData["config"].(bson.M)
+	if !ok {
+		return "", fmt.Errorf("invalid config format in service document")
+	}
 
-    // Extract the instance_id
-    instanceID, ok := config["instance_id"].(string)
-    if !ok || instanceID == "" {
-        return "", fmt.Errorf("instance ID not found for instance name '%s'", instanceName)
-    }
+	// Extract the instance_id
+	instanceID, ok := config["instance_id"].(string)
+	if !ok || instanceID == "" {
+		return "", fmt.Errorf("instance ID not found for instance name '%s'", instanceName)
+	}
 
-    return instanceID, nil
+	return instanceID, nil
+}
+
+// GetManagerByGroupID fetches the manager for a given group ID
+func GetManagerByGroupID(groupID string) (string, error) {
+	collection := GetGroupsCollection() // Replace with your groups collection function
+
+	var group bson.M
+	err := collection.FindOne(context.Background(), bson.M{"group_id": groupID}).Decode(&group)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return "", errors.New("failed to fetch group for group ID: mongo: no documents in result")
+		}
+		return "", err
+	}
+
+	manager, ok := group["manager"].(string)
+	if !ok {
+		return "", errors.New("failed to fetch manager name from group document")
+	}
+
+	return manager, nil
 }
