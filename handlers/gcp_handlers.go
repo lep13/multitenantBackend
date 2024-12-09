@@ -435,15 +435,49 @@ func DeleteGCPServiceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch the service configuration from the database
+	var service bson.M
+	filter := bson.M{
+		"username": username,
+		"service":  req.ServiceType,
+	}
+
+	// Adjust the query based on the service type
+	switch req.ServiceType {
+	case "Compute Engine":
+		filter["config.name"] = req.ServiceName
+	case "Google Kubernetes Engine (GKE)":
+		filter["config.cluster_name"] = req.ServiceName
+	case "Cloud Storage":
+		filter["config.bucket_name"] = req.ServiceName
+	case "BigQuery":
+		filter["config.dataset_id"] = req.ServiceName
+	case "Cloud SQL":
+		filter["config.instance_name"] = req.ServiceName
+	default:
+		http.Error(w, "Unsupported service type", http.StatusBadRequest)
+		return
+	}
+
+	err := db.GetServicesCollection().FindOne(context.Background(), filter).Decode(&service)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Service not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Extract necessary fields from the service configuration
+	config := service["config"].(bson.M)
+	zone, _ := config["zone"].(string)
+	serviceID, _ := config["name"].(string)
+
 	var result interface{}
-	var err error
 	var message string
-	var shouldUpdateStatus bool = false
+	shouldUpdateStatus := false
 
 	// Perform deletion based on service type
 	switch req.ServiceType {
 	case "Compute Engine":
-		result, err = cloud.DeleteComputeEngineInstance(req.ServiceName, "zone-placeholder")
+		result, err = cloud.DeleteComputeEngineInstance(req.ServiceName, zone)
 		if err == nil {
 			shouldUpdateStatus = true
 			message = "Compute Engine instance deleted successfully"
@@ -454,62 +488,86 @@ func DeleteGCPServiceHandler(w http.ResponseWriter, r *http.Request) {
 			shouldUpdateStatus = true
 			message = "Cloud Storage bucket deleted successfully"
 		}
+	case "Google Kubernetes Engine (GKE)":
+		result, err = cloud.DeleteGKECluster(req.ServiceName, zone)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "GKE cluster deleted successfully"
+		}
 	case "BigQuery":
 		result, err = cloud.DeleteBigQueryDataset(req.ServiceName)
 		if err == nil {
 			shouldUpdateStatus = true
 			message = "BigQuery dataset deleted successfully"
 		}
+	case "Cloud SQL":
+		result, err = cloud.DeleteCloudSQLInstance(serviceID)
+		if err == nil {
+			shouldUpdateStatus = true
+			message = "Cloud SQL instance deleted successfully"
+		}
 	default:
 		http.Error(w, "Unsupported service type", http.StatusBadRequest)
 		return
 	}
 
+	// Handle errors during deletion
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to delete service: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	// Update service status in the database if deletion succeeded
 	if shouldUpdateStatus {
-		// Update service status in the database
 		err = db.UpdategcpServiceStatus(username, req.ServiceType, req.ServiceName, "deleted")
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to update service status: %v", err), http.StatusInternalServerError)
 			return
 		}
 
+		// Wait a moment to ensure the database is updated
+		time.Sleep(100 * time.Millisecond)
+
 		// Fetch updated service details for notification
 		var updatedService bson.M
-		err = db.GetServicesCollection().FindOne(context.Background(), bson.M{
-			"username":    username,
-			"service":     req.ServiceType,
-			"config.name": req.ServiceName,
-		}).Decode(&updatedService)
+		err = db.GetServicesCollection().FindOne(context.Background(), filter).Decode(&updatedService)
 		if err != nil {
 			log.Printf("Failed to fetch updated service: %v", err)
+			http.Error(w, "Failed to fetch updated service details", http.StatusInternalServerError)
+			return
+		}
+
+		// Extract necessary details for notification
+		config := updatedService["config"].(bson.M)
+		groupID, _ := config["group_id"].(string)
+		endTimestamp, ok := updatedService["end_timestamp"].(time.Time)
+		if !ok {
+			log.Printf("Failed to extract end_timestamp, defaulting to current time")
+			endTimestamp = time.Now() // Fallback if `end_timestamp` is not set
+		}
+
+		// Fetch manager information
+		manager, err := db.GetManagerByGroupID(groupID)
+		if err != nil {
+			log.Printf("Failed to fetch manager for group ID %s: %v", groupID, err)
 		} else {
-			// Extract necessary details for notification
-			groupID, _ := updatedService["group_id"].(string)
-			endTimestamp, _ := updatedService["end_timestamp"].(time.Time)
+			// Save notification
+			notificationMessage := fmt.Sprintf(
+				"%s has deleted the service %s (%s) from GCP.",
+				username, req.ServiceName, req.ServiceType,
+			)
 
-			// Fetch manager information
-			manager, err := db.GetManagerByGroupID(groupID)
+			notification := models.Notification{
+				Manager:   manager,
+				Message:   notificationMessage,
+				Timestamp: endTimestamp, // Use the correct end timestamp
+			}
+
+			_, err = db.GetNotificationsCollection().InsertOne(context.Background(), notification)
 			if err != nil {
-				log.Printf("Failed to fetch manager for group ID %s: %v", groupID, err)
+				log.Printf("Failed to save notification: %v", err)
 			} else {
-				// Save notification
-				notification := models.Notification{
-					Manager:   manager,
-					Message:   fmt.Sprintf("%s has deleted the service %s from GCP.", username, req.ServiceName),
-					Timestamp: endTimestamp,
-				}
-
-				_, err = db.GetNotificationsCollection().InsertOne(context.Background(), notification)
-				if err != nil {
-					log.Printf("Failed to save notification: %v", err)
-				} else {
-					log.Println("Notification saved successfully")
-				}
+				log.Println("Notification saved successfully")
 			}
 		}
 	}

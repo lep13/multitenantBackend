@@ -604,8 +604,7 @@ func DeleteAWSServiceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Extract necessary details for notification
-		config := updatedService["config"].(bson.M)
-		groupID, _ := config["group_id"].(string)
+		groupID, _ := updatedService["group_id"].(string)
 		endTimestamp, _ := updatedService["end_timestamp"].(time.Time)
 
 		// Fetch manager information
@@ -614,9 +613,14 @@ func DeleteAWSServiceHandler(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to fetch manager for group ID %s: %v", groupID, err)
 		} else {
 			// Save notification
+			notificationMessage := fmt.Sprintf(
+				"%s has deleted the service %s (%s) from AWS.",
+				username, req.ServiceName, req.ServiceType,
+			)
+
 			notification := models.Notification{
 				Manager:   manager,
-				Message:   fmt.Sprintf("%s has deleted the service %s from AWS.", username, req.ServiceName),
+				Message:   notificationMessage,
 				Timestamp: endTimestamp,
 			}
 

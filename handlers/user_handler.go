@@ -246,12 +246,12 @@ func NotifyManagerOnServiceAction(username string, service string, action string
     var group bson.M
     err := db.GetGroupsCollection().FindOne(context.Background(), bson.M{"group_id": groupID}).Decode(&group)
     if err != nil {
-        return fmt.Errorf("Failed to fetch manager for group: %v", err)
+        return fmt.Errorf("failed to fetch manager for group: %v", err)
     }
 
     manager, ok := group["manager"].(string)
     if !ok || manager == "" {
-        return fmt.Errorf("Manager name not found for group: %s", groupID)
+        return fmt.Errorf("manager name not found for group: %s", groupID)
     }
 
     // Construct notification message
@@ -267,7 +267,7 @@ func NotifyManagerOnServiceAction(username string, service string, action string
     // Save notification to the database
     _, err = db.GetNotificationsCollection().InsertOne(context.Background(), notification)
     if err != nil {
-        return fmt.Errorf("Failed to save notification: %v", err)
+        return fmt.Errorf("failed to save notification: %v", err)
     }
 
     return nil
