@@ -72,5 +72,7 @@ func InitializeRoutes() *mux.Router {
 
     userRouter.HandleFunc("/send-notification", handlers.SendNotificationHandler).Methods("POST")
 
+    userRouter.HandleFunc("/fetch-service-cost", handlers.FetchServiceCostHandler).Methods("POST")
+
     return router
 }

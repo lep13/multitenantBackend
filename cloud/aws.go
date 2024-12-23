@@ -117,7 +117,8 @@ func CreateS3Bucket(bucketName string, enableVersioning bool, Region string) (*s
 }
 
 // Lambda Function Creation
-const lambdaExecutionRoleARN = "arn:aws:iam::173939030599:role/LambdaExecutionRole"
+// const lambdaExecutionRoleARN = "arn:aws:iam::173939030599:role/LambdaExecutionRole"
+const lambdaExecutionRoleARN = "arn:aws:iam::058264391220:role/LambdaExecutionRole"
 
 func CreateLambdaFunction(functionName, handler, runtime, zipFilePath, region string) (*lambda.CreateFunctionOutput, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
