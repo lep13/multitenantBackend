@@ -1,31 +1,32 @@
 package handlers
 
 import (
-	"compress/gzip"
+	// "compress/gzip"
 	"context"
-	"encoding/csv"
+	// "encoding/csv"
 	"encoding/json"
 	"fmt"
-	"io"
+	// "io"
 	"log"
 	"math"
 	"multitenant/db"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	billing "cloud.google.com/go/billing/apiv1"
 	"cloud.google.com/go/billing/apiv1/billingpb"
 	"github.com/aws/aws-sdk-go-v2/config"
-	ec2Types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
 	"github.com/aws/aws-sdk-go-v2/service/pricing/types"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	// "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"go.mongodb.org/mongo-driver/bson"
 	"google.golang.org/api/iterator"
@@ -544,140 +545,105 @@ type CostRequest struct {
 }
 
 func FetchServiceCostHandler(w http.ResponseWriter, r *http.Request) {
-	var req CostRequest
+    var req CostRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request payload", http.StatusBadRequest)
-		return
-	}
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request payload", http.StatusBadRequest)
+        return
+    }
 
-	if req.ServiceType == "" || (req.ServiceName == "" && req.ServiceID == "") {
-		http.Error(w, "Missing required fields", http.StatusBadRequest)
-		return
-	}
+    if req.ServiceType == "" || (req.ServiceName == "" && req.ServiceID == "") {
+        http.Error(w, "Missing required fields", http.StatusBadRequest)
+        return
+    }
 
-	// Load AWS Config
-	cfg, err := config.LoadDefaultConfig(context.TODO())
-	if err != nil {
-		log.Printf("Failed to load AWS config: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // Load AWS Config
+    cfg, err := config.LoadDefaultConfig(context.Background())
+    if err != nil {
+        log.Printf("Failed to load AWS config: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	// Resolve identifier based on service type
-	var identifier string
-	switch req.ServiceType {
-	case "AmazonEC2":
-		identifier, err = resolveEC2InstanceID(cfg, req.ServiceName)
-	case "AmazonS3":
-		identifier = req.ServiceName // S3 bucket names are directly used
-	case "AmazonRDS":
-		identifier, err = resolveRDSInstanceID(cfg, req.ServiceName)
-	case "AWSLambda":
-		identifier, err = resolveLambdaARN(cfg, req.ServiceName)
-	case "AmazonVPC":
-		identifier, err = resolveVPCID(cfg, req.ServiceName)
-	case "CloudFront":
-		identifier = req.ServiceID // CloudFront uses the Distribution ID
-	default:
-		http.Error(w, "Unsupported service type", http.StatusBadRequest)
-		return
-	}
+    // Resolve identifier based on service type
+    var identifier string
+    if req.ServiceType == "AmazonEC2" {
+        identifier, err = resolveEC2InstanceID(cfg, req.ServiceName)
 
-	if err != nil {
-		log.Printf("Failed to resolve identifier: %v", err)
-		http.Error(w, "Failed to resolve resource identifier", http.StatusInternalServerError)
-		return
-	}
+        // Handle terminated instances
+        if err != nil {
+            log.Printf("Failed to resolve instance ID. Using provided service_name as RESOURCE_ID: %s", req.ServiceName)
+            identifier = req.ServiceName // Assume service_name is the instance ID for terminated instances
+        }
+    } else {
+        http.Error(w, "Unsupported service type", http.StatusBadRequest)
+        return
+    }
 
-	// Find the latest file in the S3 bucket
-	bucketName := "lepakshimultitenantbucket13"
-	prefix := "myS3PathPrefix/ServiceCostReport/"
-	latestFilePath, err := findLatestFile(s3.NewFromConfig(cfg), bucketName, prefix)
-	if err != nil {
-		log.Printf("Failed to find latest file: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // Fetch cost from Cost Explorer
+    totalCost, err := fetchCostFromCostExplorer(cfg, req.ServiceType, identifier)
+    if err != nil {
+        log.Printf("Failed to fetch cost: %v", err)
+        http.Error(w, "Failed to fetch cost", http.StatusInternalServerError)
+        return
+    }
 
-	// Download and parse the latest report
-	file, err := downloadGZIPFromS3(s3.NewFromConfig(cfg), bucketName, latestFilePath)
-	if err != nil {
-		log.Printf("Failed to download GZIP file: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	defer os.Remove(file.Name()) // Cleanup temp file
-
-	// Calculate total cost over time for the resource
-	totalCost, err := calculateTotalCostFromCSV(file, req.ServiceType, identifier)
-	if err != nil {
-		log.Printf("Failed to calculate cost: %v", err)
-		http.Error(w, "Failed to calculate cost", http.StatusInternalServerError)
-		return
-	}
-
-	// Respond with total cost
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"service_type": req.ServiceType,
-		"identifier":   identifier,
-		"total_cost":   totalCost,
-	})
+    // Respond with total cost
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "service_type": req.ServiceType,
+        "identifier":   identifier,
+        "total_cost":   totalCost,
+    })
 }
 
-func calculateTotalCostFromCSV(gzipFile *os.File, serviceType, identifier string) (float64, error) {
-	// Open GZIP
-	gzipReader, err := gzip.NewReader(gzipFile)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open GZIP: %w", err)
-	}
-	defer gzipReader.Close()
+func fetchCostFromCostExplorer(cfg aws.Config, serviceType, identifier string) (float64, error) {
+    client := costexplorer.NewFromConfig(cfg)
 
-	// Read CSV
-	csvReader := csv.NewReader(gzipReader)
-	headers, err := csvReader.Read()
-	if err != nil {
-		return 0, fmt.Errorf("failed to read CSV headers: %w", err)
-	}
+    // Determine the start of the current month for billing period
+    now := time.Now()
+    startDate := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+    endDate := now.Format("2006-01-02") // Today's date
 
-	// log.Printf("CSV Headers: %v", headers) // Debugging headers
+    input := &costexplorer.GetCostAndUsageWithResourcesInput{
+        TimePeriod: &costexplorertypes.DateInterval{
+            Start: aws.String(startDate),
+            End:   aws.String(endDate),
+        },
+        Granularity: costexplorertypes.GranularityDaily, // AWS doesn't support `GranularityHourly` for totals
+        Metrics:     []string{"UnblendedCost"},
+        Filter: &costexplorertypes.Expression{
+            Dimensions: &costexplorertypes.DimensionValues{
+                Key:    costexplorertypes.DimensionResourceId,
+                Values: []string{identifier},
+            },
+        },
+    }
 
-	// Find relevant columns
-	resourceIndex := findColumnIndex(headers, "lineItem/ResourceId")
-	costIndex := findColumnIndex(headers, "lineItem/UnblendedCost")
+    result, err := client.GetCostAndUsageWithResources(context.TODO(), input)
+    if err != nil {
+        return 0, fmt.Errorf("failed to fetch cost data: %w", err)
+    }
 
-	if resourceIndex == -1 || costIndex == -1 {
-		return 0, fmt.Errorf("required columns not found in CSV")
-	}
+    var totalCost float64
+    for _, resultByTime := range result.ResultsByTime {
+        for _, group := range resultByTime.Groups {
+            if cost, ok := group.Metrics["UnblendedCost"]; ok {
+                parsedCost, err := parseCost(*cost.Amount)
+                if err == nil {
+                    totalCost += parsedCost
+                }
+            }
+        }
+    }
 
-	// Filter and sum costs
-	var totalCost float64
-	for {
-		record, err := csvReader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return 0, fmt.Errorf("error reading CSV record: %w", err)
-		}
-
-		if strings.EqualFold(record[resourceIndex], identifier) {
-			cost, err := parseCost(record[costIndex])
-			if err == nil {
-				totalCost += cost
-			}
-		}
-	}
-
-	return totalCost, nil
+    return totalCost, nil
 }
 
-// AWS SDK calls for resolving identifiers
 func resolveEC2InstanceID(cfg aws.Config, serviceName string) (string, error) {
     svc := ec2.NewFromConfig(cfg)
     input := &ec2.DescribeInstancesInput{
-        Filters: []ec2Types.Filter{
+        Filters: []ec2types.Filter{
             {
                 Name:   aws.String("tag:Name"),
                 Values: []string{serviceName},
@@ -749,80 +715,6 @@ func resolveVPCID(cfg aws.Config, vpcName string) (string, error) {
 	}
 
 	return "", fmt.Errorf("VPC with name %s not found", vpcName)
-}
-
-// Helper function to find the latest file in the S3 bucket
-func findLatestFile(client *s3.Client, bucket, prefix string) (string, error) {
-	var latestFile string
-	var latestTime time.Time
-
-	// List objects in the bucket with the given prefix
-	output, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to list objects: %w", err)
-	}
-
-	// Iterate over the objects to find the latest .gz file
-	for _, obj := range output.Contents {
-		if strings.HasSuffix(*obj.Key, ".gz") && obj.LastModified.After(latestTime) {
-			latestTime = *obj.LastModified
-			latestFile = *obj.Key
-		}
-	}
-
-	if latestFile == "" {
-		return "", fmt.Errorf("no .gz files found in the specified prefix: %s", prefix)
-	}
-
-	return latestFile, nil
-}
-
-func downloadGZIPFromS3(client *s3.Client, bucket, key string) (*os.File, error) {
-	tempFile, err := os.CreateTemp("", "cur-*.gz")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
-	}
-
-	// Download object
-	output, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		tempFile.Close() // Ensure temp file is closed before returning
-		os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to download file from S3: %w", err)
-	}
-	defer output.Body.Close()
-
-	// Write to the temp file
-	_, err = io.Copy(tempFile, output.Body)
-	if err != nil {
-		tempFile.Close() // Ensure temp file is closed before returning
-		os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to copy file: %w", err)
-	}
-
-	// Rewind the file pointer
-	if _, err := tempFile.Seek(0, 0); err != nil {
-		tempFile.Close()
-		os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to rewind file pointer: %w", err)
-	}
-
-	return tempFile, nil
-}
-
-func findColumnIndex(headers []string, columnName string) int {
-	for i, header := range headers {
-		if strings.EqualFold(header, columnName) {
-			return i
-		}
-	}
-	return -1
 }
 
 func parseCost(costStr string) (float64, error) {
