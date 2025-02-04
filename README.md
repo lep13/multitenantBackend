@@ -75,6 +75,8 @@ A multitenant web application designed to manage cloud resources on AWS and GCP,
 - **Others**: Docker, REST APIs, AWS Secrets Manager
 
 ---
+![6](https://github.com/user-attachments/assets/cee760dc-5cb3-406e-b0d0-6fadefa39ec7)
+![7](https://github.com/user-attachments/assets/cd02a3a7-4b63-40f9-a1c6-7bc972795aaa)
 
 For more details, refer to the [Frontend Repo](https://github.com/lep13/multitenantUI) and [Backend Repo](https://github.com/lep13/multitenantBackend).
 
